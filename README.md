@@ -54,13 +54,19 @@ This is useful for running `eget` in sandboxed environments. You will need a WAS
 
 To use the WASI build, you must manually provide the files `eget` would normally download. For example, to get `getsops/sops`:
 
-First, fetch the release information from the GitHub API:
+Running `eget.wasm` will initially fail because it cannot access the network to get release information:
+```bash
+$ wasmtime --dir=/ eget.wasm --system=linux/amd64 getsops/sops
+wasm Get: failed to open /tmp/https/api.github.com/repos/getsops/sops/releases/latest for url https://api.github.com/repos/getsops/sops/releases/latest: open /tmp/https/api.github.com/repos/getsops/sops/releases/latest: No such file or directory
+```
+
+To fix this, you must download the data and place it in the path that `eget.wasm` expects:
 ```bash
 mkdir -p /tmp/https/api.github.com/repos/getsops/sops/releases
 curl -L https://api.github.com/repos/getsops/sops/releases/latest > /tmp/https/api.github.com/repos/getsops/sops/releases/latest
 ```
 
-Then run `eget` with `wasmtime`. It will read the local file and tell you which asset to download.
+Then run `eget` with `wasmtime` again. It will read the local file and tell you which asset to download.
 ```bash
 wasmtime --dir=/ eget.wasm --system=linux/amd64 getsops/sops
 ```
