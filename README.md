@@ -57,7 +57,7 @@ To use the WASI build, you must manually provide the files `eget` would normally
 Running `eget.wasm` will initially fail because it cannot access the network to get release information:
 ```bash
 $ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops
-wasm Get: failed to open /tmp/https/api.github.com/repos/getsops/sops/releases/latest for url https://api.github.com/repos/getsops/sops/releases/latest: open /tmp/https/api.github.com/repos/getsops/sops/releases/latest: No such file or directory
+{"message":"wasm Get","path":"/tmp/https/api.github.com/repos/getsops/sops/releases/latest","url":"https://api.github.com/repos/getsops/sops/releases/latest","error":"open /tmp/https/api.github.com/repos/getsops/sops/releases/latest: No such file or directory"}
 ```
 
 To fix this, you must download the data and place it in the path that `eget.wasm` expects:
@@ -71,7 +71,7 @@ Note that you must specify the target system with `--system` because `eget` cann
 ```bash
 $ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
 https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
-wasm Get: failed to open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64 for url https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: No such file or directory (URL: https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64)
+{"message":"wasm Get","path":"/tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","url":"https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","error":"open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: No such file or directory"}
 ```
 This shows the URL of the asset that `eget` will try to download. Now you must download this asset and place it in the correct path:
 ```bash
