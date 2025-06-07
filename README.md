@@ -48,7 +48,7 @@ Before you can get anything, you have to get Eget. If you already have Eget and 
 
 ### WASI/WASM
 
-A [WASI](https://wasi.dev/) compatible build can be created by running the `./build-wasi.sh` script. This will produce an `eget.wasm` file. This build of `eget` does not perform any network I/O. Instead, any network requests are translated into filesystem reads from `/tmp`. A request to `scheme://host/path` will be read from `/tmp/scheme/host/path`.
+A [WASI](https://wasi.dev/) compatible build can be created by running the `./build-wasi.sh` script. This will produce an `eget.wasm` file. This build of `eget` does not perform any network I/O because Go and most WASI runtimes only support `wasi_snapshot_preview1`, which does not include sockets. Instead, any network requests are translated into filesystem reads from `/tmp`. A request to `scheme://host/path` will be read from `/tmp/scheme/host/path`.
 
 This is useful for running `eget` in sandboxed environments. You will need a WASI-compatible runtime like [wasmtime](https://wasmtime.dev/).
 
