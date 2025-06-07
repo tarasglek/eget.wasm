@@ -52,7 +52,12 @@ A [WASI](https://wasi.dev/) compatible build can be created by running the `./bu
 
 This is useful for running `eget` in sandboxed environments. You will need a WASI-compatible runtime like [wasmtime](https://wasmtime.dev/).
 
-To use the WASI build, you must manually provide the files `eget` would normally download. For example, to get `getsops/sops`:
+To use the WASI build, you must first build the wasm binary:
+```bash
+./build-wasi.sh
+```
+
+Then, you must manually provide the files `eget` would normally download. For example, to get `getsops/sops`:
 
 Running `eget.wasm` will initially fail because it cannot access the network to get release information:
 ```bash
