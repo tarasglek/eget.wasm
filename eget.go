@@ -438,6 +438,14 @@ func main() {
 			fmt.Fprintf(output, "%s: %v\n", target, err)
 			os.Exit(0)
 		}
+		var wasmErr *WasmGetError
+		if errors.As(err, &wasmErr) {
+			b, jerr := json.Marshal(wasmErr)
+			if jerr != nil {
+				fatal(err)
+			}
+			fatal(string(b))
+		}
 		fatal(err)
 	}
 
