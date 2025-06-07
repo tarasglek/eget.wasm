@@ -7,3 +7,4 @@ eget.1
 !/test/test_eget.go
 !/test/eget.toml
 .eget.toml
+.aider*
