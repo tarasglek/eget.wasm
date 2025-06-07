@@ -1,2 +1,2 @@
 #!/bin/sh
-GOOS=wasip1 GOARCH=wasm go build -ldflags="-s -w" -trimpath
+GOOS=wasip1 GOARCH=wasm go build -o eget.wasm -ldflags="-s -w" -trimpath
