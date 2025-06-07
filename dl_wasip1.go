@@ -1,21 +1,24 @@
-//go:build !wasip1
+//go:build wasip1
 
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
 	pb "github.com/schollz/progressbar/v3"
 	"github.com/zyedidia/eget/home"
 )
+
+// This file provides stubs for wasm builds to avoid network calls.
+// It reads from /tmp/<url> instead of making a network request.
 
 func tokenFrom(s string) (string, error) {
 	if strings.HasPrefix(s, "@") {
@@ -41,38 +44,36 @@ func getGithubToken() (string, error) {
 	return "", ErrNoToken
 }
 
+// SetAuthHeader is a no-op on wasm.
 func SetAuthHeader(req *http.Request) *http.Request {
-	token, err := getGithubToken()
-	if err != nil && !errors.Is(err, ErrNoToken) {
-		fmt.Fprintln(os.Stderr, "warning: not using github token:", err)
-	}
-
-	if req.URL.Scheme == "https" && req.Host == "api.github.com" && err == nil {
-		if opts.DisableSSL {
-			fmt.Fprintln(os.Stderr, "error: cannot use GitHub token if SSL verification is disabled")
-			os.Exit(1)
-		}
-		req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	}
-
 	return req
 }
 
-func Get(url string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", url, nil)
+func urlToPath(url string) string {
+	p := strings.TrimPrefix(url, "https://")
+	p = strings.TrimPrefix(p, "http://")
+	return path.Join("/tmp", p)
+}
 
+func Get(url string) (*http.Response, error) {
+	p := urlToPath(url)
+	f, err := os.Open(p)
 	if err != nil {
+		return nil, fmt.Errorf("wasm Get: failed to open %s for url %s: %w", p, url, err)
+	}
+
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
 		return nil, err
 	}
 
-	req = SetAuthHeader(req)
-
-	proxyClient := &http.Client{Transport: &http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.DisableSSL},
-	}}
-
-	return proxyClient.Do(req)
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Body:          f,
+		ContentLength: fi.Size(),
+		Header:        make(http.Header),
+	}, nil
 }
 
 type RateLimitJson struct {
@@ -104,23 +105,8 @@ func (r RateLimit) String() string {
 
 func GetRateLimit() (RateLimit, error) {
 	url := "https://api.github.com/rate_limit"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return RateLimit{}, err
-	}
-
-	req = SetAuthHeader(req)
-
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return RateLimit{}, err
-	}
-
-	defer resp.Body.Close()
-
-	b, err := io.ReadAll(resp.Body)
+	p := urlToPath(url)
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return RateLimit{}, err
 	}
