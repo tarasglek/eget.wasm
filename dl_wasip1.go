@@ -58,7 +58,12 @@ func Get(url string) (*http.Response, error) {
 	p := urlToPath(url)
 	f, err := os.Open(p)
 	if err != nil {
-		return nil, fmt.Errorf("wasm Get: failed to open %s for url %s: %w", p, url, err)
+		return nil, &WasmGetError{
+			Message: "wasm Get",
+			Path:    p,
+			URL:     url,
+			Err:     err.Error(),
+		}
 	}
 
 	fi, err := f.Stat()

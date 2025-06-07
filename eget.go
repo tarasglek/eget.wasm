@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,17 @@ import (
 	"github.com/jessevdk/go-flags"
 	pb "github.com/schollz/progressbar/v3"
 )
+
+type WasmGetError struct {
+	Message string `json:"message"`
+	Path    string `json:"path"`
+	URL     string `json:"url"`
+	Err     string `json:"error"`
+}
+
+func (e *WasmGetError) Error() string {
+	return fmt.Sprintf("%s: failed to open %s for url %s: %s", e.Message, e.Path, e.URL, e.Err)
+}
 
 func fatal(a ...interface{}) {
 	fmt.Fprintln(os.Stderr, a...)
@@ -480,7 +492,16 @@ func main() {
 			}))
 	})
 	if err != nil {
-		fatal(fmt.Sprintf("%s (URL: %s)", err, url))
+		var wasmErr *WasmGetError
+		if errors.As(err, &wasmErr) {
+			b, jerr := json.Marshal(wasmErr)
+			if jerr != nil {
+				fatal(err)
+			}
+			fatal(string(b))
+		} else {
+			fatal(fmt.Sprintf("%s (URL: %s)", err, url))
+		}
 	}
 
 	body := buf.Bytes()
