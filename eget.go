@@ -233,6 +233,12 @@ func writeFile(data []byte, rename string, mode fs.FileMode) error {
 
 	f, err := os.OpenFile(rename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
+		if perr, ok := err.(*os.PathError); ok {
+			abs, absErr := filepath.Abs(rename)
+			if absErr == nil {
+				perr.Path = abs
+			}
+		}
 		return err
 	}
 	defer f.Close()
