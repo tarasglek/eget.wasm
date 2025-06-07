@@ -66,11 +66,23 @@ mkdir -p /tmp/https/api.github.com/repos/getsops/sops/releases
 curl -L https://api.github.com/repos/getsops/sops/releases/latest > /tmp/https/api.github.com/repos/getsops/sops/releases/latest
 ```
 
-Then run `eget` with `wasmtime` again. It will read the local file and tell you which asset to download.
+Then run `eget` with `wasmtime` again. It will read the local file and attempt to find a suitable asset.
+Note that you must specify the target system with `--system` because `eget` cannot infer it in a WASI environment. The `-a ^json` argument is used here to filter out asset metadata files.
 ```bash
-wasmtime --dir=/ eget.wasm --system=linux/amd64 getsops/sops
+$ wasmtime --dir=/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
+https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
+wasm Get: failed to open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64 for url https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: No such file or directory (URL: https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64)
 ```
-After manually downloading the asset to the corresponding path under `/tmp`, run the command again to extract the binary.
+This shows the URL of the asset that `eget` will try to download. Now you must download this asset and place it in the correct path:
+```bash
+mkdir -p /tmp/https/github.com/getsops/sops/releases/download/v3.10.2
+curl -L https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64 > /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
+```
+Finally, run the command again to extract the binary from the downloaded asset:
+```bash
+wasmtime --dir=/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
+```
+This will extract `sops` to the current directory.
 
 ### Quick-install script
 
