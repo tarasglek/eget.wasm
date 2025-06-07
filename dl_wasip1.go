@@ -50,8 +50,7 @@ func SetAuthHeader(req *http.Request) *http.Request {
 }
 
 func urlToPath(url string) string {
-	p := strings.TrimPrefix(url, "https://")
-	p = strings.TrimPrefix(p, "http://")
+	p := strings.Replace(url, "://", "/", 1)
 	return path.Join("/tmp", p)
 }
 
