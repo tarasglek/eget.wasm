@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [ master, humphd/node-wrapper ]
+    branches: [ master ]
   pull_request:
-    branches: [ master, humphd/node-wrapper ]
+    branches: [ master ]
 
 jobs:
   test:
