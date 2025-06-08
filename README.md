@@ -89,6 +89,264 @@ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
 ```
 This will extract `sops` to the current directory.
 
+## Node.js Wrapper
+
+A Node.js wrapper is provided for easy integration with Node.js applications.
+
+### Installation
+
+```bash
+npm install eget.wasm
+# or
+pnpm add eget.wasm
+# or
+yarn add eget.wasm
+```
+
+### Quick Start
+
+The easiest way to use `eget.wasm` is with the `eget()` function, which handles all the WASM instance creation and cleanup for you after invoking eget:
+
+```js
+import { eget } from 'eget.wasm';
+
+// Simple download
+await eget('getsops/sops');
+
+// With options
+await eget('cli/cli', {
+  system: 'linux/amd64',
+  tag: 'v2.40.1',
+  output: './bin'
+});
+```
+
+### API Reference
+
+#### `eget(repo, options)`
+
+Convenience function that creates an `Eget` instance, downloads the specified repository, and automatically cleans up temporary files.
+
+```js
+import { eget } from 'eget.wasm';
+
+await eget('owner/repo', options);
+```
+
+**Parameters:**
+
+- `repo` (string, required): GitHub repository in format 'owner/repo'
+- `options` (object, optional): Combined download and configuration options
+  - **Download Options:**
+    - `system` (string): Target platform (auto-detected if omitted)
+    - `asset` (string): Asset name pattern (regex)
+    - `output` (string): Output directory (default: `'.'`)
+    - `tag` (string): Specific release tag
+    - `preRelease` (boolean): Include pre-releases (default: `false`)
+    - `all` (boolean): Download all assets (default: `false`)
+    - `file` (string): Extract specific file from archive
+    - `to` (string): Rename extracted file
+    - `quiet` (boolean): Suppress output (default: `false`)
+    - `upgrade` (boolean): Only upgrade if newer (default: `false`)
+    - `verify` (string): SHA256 hash to verify download
+    - `removeArchive` (boolean): Remove archive after extraction (default: `false`)
+    - `extractAll` (boolean): Extract all files from archive (default: `false`)
+  - **Configuration Options:**
+    - `wasmPath` (string): Path to eget.wasm file (default: bundled version)
+    - `tmpDir` (string): Temporary directory (default: `'./tmp'`)
+    - `verbose` (boolean): Enable verbose logging (default: `false`)
+
+**Returns:** `Promise<boolean>` - `true` if successful, `false` otherwise
+
+**Examples:**
+
+```js
+// Simple download
+await eget('getsops/sops');
+
+// Download specific version with custom output
+await eget('cli/cli', {
+  tag: 'v2.40.1',
+  system: 'linux/amd64',
+  output: './bin',
+  verbose: true
+});
+
+// Download with asset filtering
+await eget('goreleaser/goreleaser', {
+  asset: '^json',  // Exclude JSON files
+  removeArchive: true
+});
+```
+
+**Note:** This function automatically handles cleanup of temporary files, making it ideal for one-off downloads. For multiple downloads or when you need more control over the lifecycle, use the `Eget` class directly.
+
+#### Eget Constructor
+
+```js
+const eget = new Eget(options)
+```
+
+**Parameters:**
+
+- `options` (object, optional):
+  - `tmpDir` (string): Temporary directory for downloads (default: `'./tmp'`)
+  - `verbose` (boolean): Enable verbose logging (default: `false`)
+  - `wasmPath` (string): Path to the eget.wasm file (default: `eget.wasm` in installed module dir)
+
+#### Methods
+
+##### `download(repo, options)`
+
+Downloads assets from a GitHub repository.
+
+```js
+await eget.download('owner/repo', {
+  system: 'linux/amd64',     // Target platform (auto-detected if omitted)
+  asset: 'linux.*\\.tar\\.gz', // Asset name pattern (regex)
+  output: './bin',           // Output directory
+  tag: 'v1.2.3',            // Specific release tag
+  preRelease: false,         // Include pre-releases
+  all: false,               // Download all assets
+  file: 'binary',           // Extract specific file from archive
+  to: 'renamed-binary',     // Rename extracted file
+  quiet: false,             // Suppress output
+  upgrade: false,           // Only upgrade if newer
+  verify: 'sha256hash',     // Verify SHA256 hash
+  removeArchive: false,     // Remove archive after extraction
+  extractAll: false         // Extract all files from archive
+});
+```
+
+**Returns:** `Promise<boolean>` - `true` if successful, `false` otherwise
+
+##### `cleanup()`
+
+Removes temporary files created during downloads.
+
+```js
+await eget.cleanup();
+```
+
+#### Utility Functions
+
+##### `detectSystem()`
+
+Auto-detects the current platform and architecture.
+
+```js
+import { detectSystem } from 'eget.wasm';
+
+console.log(detectSystem()); // e.g., 'linux/amd64', 'darwin/arm64', 'windows/amd64'
+```
+
+### Node.js Wrapper Examples
+
+#### Download Latest Release
+
+```js
+import { Eget } from 'eget.wasm';
+
+const eget = new Eget({ verbose: true });
+
+// Download latest sops for current platform
+await eget.download('getsops/sops', {
+  asset: '^json' // Exclude JSON metadata files
+});
+```
+
+#### Download Specific Version
+
+```js
+// Download specific version of GitHub CLI
+await eget.download('cli/cli', {
+  tag: 'v2.40.1',
+  system: 'linux/amd64',
+  output: './tools'
+});
+```
+
+#### Download and Extract Specific File
+
+```js
+// Download and extract just the binary
+await eget.download('goreleaser/goreleaser', {
+  file: 'goreleaser',
+  to: 'goreleaser-bin',
+  removeArchive: true
+});
+```
+
+#### Cross-Platform Download
+
+```js
+import { Eget, detectSystem } from 'eget.wasm';
+
+const eget = new Eget();
+
+// Download for multiple platforms
+const platforms = ['linux/amd64', 'darwin/amd64', 'windows/amd64'];
+
+for (const platform of platforms) {
+  await eget.download('cli/cli', {
+    system: platform,
+    output: `./dist/${platform.replace('/', '-')}`
+  });
+}
+
+// Or just current platform
+await eget.download('cli/cli', {
+  system: detectSystem(),
+  output: './bin'
+});
+```
+
+### Error Handling
+
+```js
+import { Eget } from 'eget.wasm';
+
+const eget = new Eget();
+
+try {
+  const success = await eget.download('owner/repo');
+  if (success) {
+    console.log('Download completed!');
+  } else {
+    console.log('Download failed');
+  }
+} catch (error) {
+  console.error('Error:', error.message);
+} finally {
+  // Clean up temporary files
+  await eget.cleanup();
+}
+```
+
+### TypeScript Support
+
+The package includes full TypeScript definitions:
+
+```typescript
+import { Eget, detectSystem } from 'eget.wasm';
+import type { EgetOptions, DownloadOptions } from 'eget.wasm';
+
+const options: EgetOptions = {
+  tmpDir: './cache',
+  verbose: true
+};
+
+const eget = new Eget('./eget.wasm', options);
+
+const downloadOptions: DownloadOptions = {
+  system: 'linux/amd64',
+  asset: 'linux.*\\.tar\\.gz',
+  output: './bin'
+};
+
+const success: boolean = await eget.download('owner/repo', downloadOptions);
+```
+
 ### Quick-install script
 
 ```
