@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,17 @@ import (
 	"github.com/jessevdk/go-flags"
 	pb "github.com/schollz/progressbar/v3"
 )
+
+type WasmGetError struct {
+	Message string `json:"message"`
+	Path    string `json:"path"`
+	URL     string `json:"url"`
+	Err     string `json:"error"`
+}
+
+func (e *WasmGetError) Error() string {
+	return fmt.Sprintf("%s: failed to open %s for url %s: %s", e.Message, e.Path, e.URL, e.Err)
+}
 
 func fatal(a ...interface{}) {
 	fmt.Fprintln(os.Stderr, a...)
@@ -226,6 +238,12 @@ func writeFile(data []byte, rename string, mode fs.FileMode) error {
 		return err
 	}
 
+	abs, err := filepath.Abs(rename)
+	if err != nil {
+		return err
+	}
+	rename = abs
+
 	// remove file if it exists already
 	os.Remove(rename)
 	// make parent directories if necessary
@@ -420,6 +438,14 @@ func main() {
 			fmt.Fprintf(output, "%s: %v\n", target, err)
 			os.Exit(0)
 		}
+		var wasmErr *WasmGetError
+		if errors.As(err, &wasmErr) {
+			b, jerr := json.Marshal(wasmErr)
+			if jerr != nil {
+				fatal(err)
+			}
+			fatal(string(b))
+		}
 		fatal(err)
 	}
 
@@ -474,7 +500,16 @@ func main() {
 			}))
 	})
 	if err != nil {
-		fatal(fmt.Sprintf("%s (URL: %s)", err, url))
+		var wasmErr *WasmGetError
+		if errors.As(err, &wasmErr) {
+			b, jerr := json.Marshal(wasmErr)
+			if jerr != nil {
+				fatal(err)
+			}
+			fatal(string(b))
+		} else {
+			fatal(fmt.Sprintf("%s (URL: %s)", err, url))
+		}
 	}
 
 	body := buf.Bytes()

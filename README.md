@@ -46,6 +46,49 @@ eget --all --file '*' ActivityWatch/activitywatch
 
 Before you can get anything, you have to get Eget. If you already have Eget and want to upgrade, use `eget zyedidia/eget`.
 
+### WASI/WASM
+
+A [WASI](https://wasi.dev/) compatible build can be created by running the `./build-wasi.sh` script. This will produce an `eget.wasm` file. This build of `eget` does not perform any network I/O because the Go compiler and most WASI runtimes only support `wasi_snapshot_preview1`, which does not include sockets. Instead, any network requests are translated into filesystem reads from `/tmp`. A request to `scheme://host/path` will be read from `/tmp/scheme/host/path`.
+
+This is useful for running `eget` in sandboxed environments. You will need a WASI-compatible runtime like [wasmtime](https://wasmtime.dev/).
+
+To use the WASI build, you must first build the wasm binary:
+```bash
+./build-wasi.sh
+```
+
+Then, you must manually provide the files `eget` would normally download. For example, to get `getsops/sops`:
+
+Running `eget.wasm` will initially fail because it cannot access the network to get release information:
+```bash
+$ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops
+{"message":"wasm Get","path":"/tmp/https/api.github.com/repos/getsops/sops/releases/latest","url":"https://api.github.com/repos/getsops/sops/releases/latest","error":"open /tmp/https/api.github.com/repos/getsops/sops/releases/latest: No such file or directory"}
+```
+
+To fix this, you must download the data and place it in the path that `eget.wasm` expects:
+```bash
+mkdir -p ./tmp/https/api.github.com/repos/getsops/sops/releases
+curl -L https://api.github.com/repos/getsops/sops/releases/latest > ./tmp/https/api.github.com/repos/getsops/sops/releases/latest
+```
+
+Then run `eget` with `wasmtime` again. It will read the local file and attempt to find a suitable asset.
+Note that you must specify the target system with `--system` because `eget` cannot infer it in a WASI environment. The `-a ^json` argument is used here to filter out asset metadata files.
+```bash
+$ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
+https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
+{"message":"wasm Get","path":"/tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","url":"https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","error":"open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: No such file or directory"}
+```
+This shows the URL of the asset that `eget` will try to download. Now you must download this asset and place it in the correct path:
+```bash
+mkdir -p ./tmp/https/github.com/getsops/sops/releases/download/v3.10.2
+curl -L https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64 > ./tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
+```
+Finally, run the command again to extract the binary from the downloaded asset:
+```bash
+wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
+```
+This will extract `sops` to the current directory.
+
 ### Quick-install script
 
 ```
