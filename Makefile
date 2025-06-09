@@ -21,6 +21,9 @@ vet:
 eget:
 	go build -trimpath -ldflags "-s -w $(GOVARS)" .
 
+eget.wasm:
+	GOOS=wasip1 GOARCH=wasm go build -o eget.wasm -ldflags="-s -w" -trimpath
+
 test: eget
 	cd test; EGET_CONFIG=eget.toml EGET_BIN= TEST_EGET=../eget go run test_eget.go
 

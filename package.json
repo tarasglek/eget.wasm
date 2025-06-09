@@ -18,10 +18,10 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit --allowJs eget.js",
-    "build-wasm": "./build-wasi.sh",
+    "build-wasm": "make eget.wasm",
     "generate-types": "tsc eget.js --declaration --allowJs --emitDeclarationOnly --outDir types",
     "build": "npm run build-wasm && npm run generate-types",
-    "test": "node --test-force-exit --test test/eget.test.js"
+    "test": "node --test --test-force-exit test/eget.test.js"
   },
   "license": "MIT",
   "devDependencies": {

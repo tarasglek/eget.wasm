@@ -201,13 +201,16 @@ describe("Eget WASM Node.js Wrapper", { timeout: TIMEOUT_MS }, () => {
 
   describe("eget() helper function", () => {
     test("should download and cleanup automatically", async () => {
+      const helperTestOutputDir = join(TEST_TMP_DIR, "eget-helper-out");
+      const helperTestTmpDir = join(TEST_TMP_DIR, "eget-helper-tmp");
+
       const result = await eget("cli/cli", {
         system: "linux/amd64",
         tag: "v2.40.1",
         asset: "linux_amd64.tar.gz",
         verbose: true,
-        output: TEST_TMP_DIR,
-        tmpDir: TEST_TMP_DIR,
+        output: helperTestOutputDir,
+        tmpDir: helperTestTmpDir,
       });
 
       assert.strictEqual(result, true);
@@ -215,7 +218,7 @@ describe("Eget WASM Node.js Wrapper", { timeout: TIMEOUT_MS }, () => {
       // Since eget() cleans up tmpDir, and we set tmpDir to TEST_TMP_DIR,
       // the directory might be gone. Let's check if files exist differently:
       try {
-        const files = await readdir(TEST_TMP_DIR);
+        const files = await readdir(helperTestOutputDir);
         assert.ok(files.length > 0);
       } catch (error) {
         if (error.code === "ENOENT") {
