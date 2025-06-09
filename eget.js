@@ -1,15 +1,27 @@
-import { readFile, writeFile, mkdir, rm, chmod, stat, readdir } from "node:fs/promises";
-import { dirname, join, extname } from "node:path";
+import { readFile, writeFile, open, mkdir, rm, chmod, stat, readdir } from "node:fs/promises";
+import { dirname, join, extname, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WASI } from "node:wasi";
+import { randomUUID } from "node:crypto";
+import { tmpdir as osTmpDir } from "node:os";
 
+// We expect to find eget.wasm in the same dir as eget.js
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
 
 /**
  * @typedef {Object} EgetOptions
- * @property {string} [wasmPath="./eget.wasm"] - Path to the eget.wasm file
  * @property {string} [tmpDir='./tmp'] - Temporary directory for downloaded files
  * @property {boolean} [verbose=false] - Enable verbose logging
+ */
+
+/**
+ * @typedef {object} EgetError
+ * @property {string|null} path - The file path associated with the error, if available.
+ * @property {string|null} url - The URL associated with the error, if available.
+ * @property {string} error - The error message. Defaults to "unknown error"
+ *   if the original error string is valid JSON but lacks an error field,
+ *   or the original error string if it's not valid JSON.
  */
 
 /**
@@ -33,7 +45,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
  * @typedef {Object} RunResult
  * @property {boolean} success - Whether the operation succeeded
- * @property {string} [missingUrl] - URL that needs to be downloaded (if success is false)
+ * @property {string|null} [url] - URL that needs to be downloaded (if success is false)
+ * @property {string|null} [path] - Path associated with the error
+ * @property {string} [error] - Error message
  */
 
 /**
@@ -75,19 +89,24 @@ function urlToPath(url, tmpDir) {
 }
 
 /**
- * Parses an error string to extract a missing URL.
- * @param {string} errorStr - Error string from eget WASM
- * @returns {string|null} Extracted URL or null if not found
+ * Parses stderr to extract useful info. eget WASM sends errors as JSON.
+ * @param {string} errorStr - Error JSON string from eget WASM, or a plain error string.
+ * @returns {EgetError} An object containing the parsed error information.
  */
-function parseErrorForUrl(errorStr) {
-  console.log({errorStr});
+function parseEgetError(errorStr) {
   try {
     const errorObj = JSON.parse(errorStr);
-    return errorObj.url || null;
+    return {
+      path: errorObj.path || null,
+      url: errorObj.url || null,
+      error: errorObj.error || "unknown error"
+    };
   } catch {
-    // Fallback to regex parsing for non-JSON errors
-    const match = errorStr.match(/"url":"([^"]+)"/);
-    return match ? match[1] : null;
+    return {
+      path: null,
+      url: null,
+      error: errorStr
+    }
   }
 }
 
@@ -103,7 +122,6 @@ async function isExecutableFile(filePath, stats) {
   }
 
   const ext = extname(filePath).toLowerCase();
-
   // Skip files with extensions that are clearly not executables
   const nonExecutableExts = [
     ".txt",
@@ -206,20 +224,17 @@ async function setExecutablePermissions(filePath) {
  */
 export class Eget {
   /**
-   * Static cache for compiled WASM modules, keyed by file path
-   * @type {Map<string, WebAssembly.Module>}
+   * Cached promise for the compiled WASM module.
+   * This ensures the module is compiled only once.
+   * @type {Promise<WebAssembly.Module> | null}
    */
-  static wasmModuleCache = new Map();
+  static wasmCompilationPromise = null;
 
   /**
    * Creates a new Eget instance.
    * @param {EgetOptions} [options={}] - Configuration options
-   * @throws {Error} If wasmPath is not provided
    */
   constructor(options = {}) {
-    if (options.wasmPath && typeof options.wasmPath !== "string") {
-      throw new TypeError("wasmPath must be a string");
-    }
     if (options.tmpDir && typeof options.tmpDir !== "string") {
       throw new TypeError("tmpDir must be a string");
     }
@@ -228,52 +243,56 @@ export class Eget {
     }
 
     /** @type {string} */
-    this.wasmPath = options.wasmPath ?? join(__dirname, "eget.wasm");
-
-    /** @type {string} */
-    this.tmpDir = options.tmpDir || "./tmp";
+    this.tmpDir = resolve(options.tmpDir || "./tmp");
 
     /** @type {boolean} */
     this.verbose = options.verbose || false;
   }
 
   /**
-   * Loads and compiles the WASM module, caching it for reuse.
+   * Loads and compiles the WASM module, caching the compilation promise.
    * @returns {Promise<WebAssembly.Module>} Compiled WASM module
    * @throws {Error} If WASM file cannot be loaded or compiled
    */
   async getWasmModule() {
-    if (Eget.wasmModuleCache.has(this.wasmPath)) {
-      this.log(`Using cached WASM module: ${this.wasmPath}`);
-      return Eget.wasmModuleCache.get(this.wasmPath);
+    if (Eget.wasmCompilationPromise) {
+      this.log(`Using cached WASM compilation promise`);
+      return Eget.wasmCompilationPromise;
     }
 
-    let wasmBytes;
-    try {
-      wasmBytes = await readFile(this.wasmPath);
-    } catch (error) {
-      throw new Error(
-        `Failed to read WASM file ${this.wasmPath}: ${error.message}`
-      );
-    }
-
-    try {
-      const module = await WebAssembly.compile(wasmBytes);
-      this.log(`Compiled WASM module: ${this.wasmPath}`);
-      Eget.wasmModuleCache.set(this.wasmPath, module);
-      return module;
-    } catch (error) {
-      throw new Error(`Failed to compile WASM module: ${error.message}`);
-    }
+    this.log(`Initiating compilation for WASM module: ${DEFAULT_WASM_PATH}`);
+    Eget.wasmCompilationPromise = (async () => {
+      try {
+        const wasmBytes = await readFile(DEFAULT_WASM_PATH);
+        const module = await WebAssembly.compile(wasmBytes);
+        this.log(`Compiled WASM module: ${DEFAULT_WASM_PATH}`);
+        return module;
+      } catch (error) {
+        // If compilation fails, reset the promise so a future call can retry.
+        Eget.wasmCompilationPromise = null;
+        this.log(
+          `Failed to load/compile WASM ${DEFAULT_WASM_PATH}: ${error.message}`
+        );
+        if (error.message.includes("read")) {
+            throw new Error(
+              `Failed to read WASM file ${DEFAULT_WASM_PATH}: ${error.message}`
+            );
+        }
+        throw new Error(
+          `Failed to compile WASM module ${DEFAULT_WASM_PATH}: ${error.message}`
+        );
+      }
+    })();
+    return Eget.wasmCompilationPromise;
   }
 
   /**
-   * Logs a message if verbose mode is enabled.
+   * Logs a message to stderr if verbose mode is enabled.
    * @param {string} message - Message to log
    */
   log(message) {
     if (this.verbose) {
-      console.log(message);
+      console.error(`[eget.wasm] ${message}`);
     }
   }
 
@@ -298,7 +317,7 @@ export class Eget {
    * @throws {Error} If download fails or network error occurs
    */
   async downloadFile(url, filePath, timeoutMs = 30000) {
-    this.log(`Downloading: ${url}`);
+    this.log(`Downloading: ${url} to ${filePath}`);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -317,6 +336,9 @@ export class Eget {
       this.log(`Saved to: ${filePath}`);
     } catch (error) {
       clearTimeout(timeoutId);
+      if (error.name === "AbortError") {
+         throw new Error(`Download timed out for ${url}`);
+      }
       if (error.name === "TypeError" && error.message.includes("fetch")) {
         throw new Error(`Network error downloading ${url}: ${error.message}`);
       }
@@ -330,17 +352,33 @@ export class Eget {
   /**
    * Runs the eget WASM binary with the given arguments.
    * @param {string[]} args - Command line arguments for eget
+   * @param {object} [runOptions={}] - Options for WASI execution
+   * @param {string} [runOptions.cwd] - CWD for the WASM instance
    * @returns {Promise<RunResult>} Result of the operation
-   * @throws {Error} If WASM file cannot be loaded or unexpected error occurs
    */
-  async run(args) {
+  async run(args, runOptions = {}) {
+    // We need to capture stderr from eget
+    const stderrFilePath = join(osTmpDir(), `eget.stderr_${randomUUID()}.txt`);
+    const stderrFile = await open(stderrFilePath, 'w');
+    this.log(`using stderr file ${stderrFilePath}`);
+
+    // Ensure the host temporary directory for WASM cache exists
+    await this.ensureDir(this.tmpDir);    
+
+    // Ensure WASM's CWD exists
+    const wasmCwd = resolve(runOptions.cwd || process.cwd());
+    await this.ensureDir(wasmCwd);
+
     const wasi = new WASI({
       version: "preview1",
       args: ["eget.wasm", ...args],
       env: process.env,
       preopens: {
-        "/": process.cwd(),
+        "/": wasmCwd,
+        "/tmp": this.tmpDir,
       },
+      stderr: stderrFile.fd,
+      returnOnExit: true 
     });
 
     try {
@@ -349,14 +387,34 @@ export class Eget {
         module,
         wasi.getImportObject()
       );
-      wasi.start(instance);
-      return { success: true };
-    } catch (error) {
-      const missingUrl = parseErrorForUrl(error.toString());
-      if (missingUrl) {
-        return { success: false, missingUrl };
+
+      this.log(`Starting WASM execution...`);
+      const exitCode = wasi.start(instance);
+      this.log(`WASM execution finished with exit code: ${exitCode}`);
+
+      await stderrFile.close();
+
+      if(exitCode === 0) {
+        return { success: true };
       }
-      throw error;
+
+      let errorText = "";
+      try {
+        errorText = (await readFile(stderrFilePath, { encoding: 'utf8' })).trim();
+      } catch (readError) {
+        this.log(`Failed to read stderr: ${readError.message}`);
+      }
+
+      const parsedError = parseEgetError(errorText);
+      this.log(`exited with code ${exitCode}: ${parsedError.error}`);
+      return { success: false, ...parsedError };
+    } finally {
+      try {
+        await stderrFile?.close();
+        await rm(stderrFilePath, { force: true });        
+      } catch(error) {
+        this.log(`unable to remove temporary stderr file: ${error.message}`);
+      }
     }
   }
 
@@ -395,6 +453,7 @@ export class Eget {
     if (tag) args.push("--tag", tag);
     if (preRelease) args.push("--pre-release");
     // --source - download the source code for the target repo instead of a release
+    // `to` is relative to WASM's CWD, which will be `effectiveOutputPath`
     if (to) args.push("--to", to);
     if (system) args.push("--system", system);
     if (file) args.push("--file", file);
@@ -407,6 +466,8 @@ export class Eget {
     // --rate           show GitHub API rate limiting information
     // -r, --remove     remove the given file from $EGET_BIN or the current directory
     if (verify) args.push("--verify-sha256", verify);
+    if (removeArchive) args.push("--remove-archive");
+    if (extractAll) args.push("--extract-all");
     // -D, --download-all   download all projects defined in the config file
     // TODO: there is no --output flag...
     //if (output !== ".") args.push("--output", output);
@@ -415,43 +476,60 @@ export class Eget {
 
     this.log(`Running eget with args: ${args.join(" ")}`);
 
+    const effectiveOutputPath = resolve(output);
+
     // Keep trying until we have all required files
     let attempts = 0;
-    const maxAttempts = 10; // Prevent infinite loops
+    const maxAttempts = 10;
 
     while (attempts < maxAttempts) {
-      const result = await this.run(args);
+      const result = await this.run(args, { cwd: effectiveOutputPath });
 
       if (result.success) {
-        // Set executable permissions only on files that need it
-        if (output && output !== ".") {
+        this.log("✅ Download completed successfully!");
+
+        // Files are in `effectiveOutputPath` or `to` (relative to it)
+        let filesToChmod = [];
+        if (file && to) {
+          filesToChmod.push(resolve(effectiveOutputPath, to));
+        } else if (file) {
+          // Extracted file name is basename of the `file` pattern
+          const fileName = basename(file);
+          filesToChmod.push(resolve(effectiveOutputPath, fileName));
+        } else { // All files from archive, or a single downloaded asset
           try {
-            const files = await readdir(output);
-            for (const file of files) {
-              const filePath = join(output, file);
-              await setExecutablePermissions(filePath);
+            const dirContents = await readdir(effectiveOutputPath);
+            for (const fName of dirContents) {
+              filesToChmod.push(join(effectiveOutputPath, fName));
             }
-          } catch (error) {
-            // Don't fail the download if we can't set permissions
-            console.warn("Could not process file permissions:", error.message);
+          } catch (e) {
+            this.log(`Warn: readdir ${effectiveOutputPath} for perms: ${e.message}`);
           }
         }
-
-        this.log("✅ Download completed successfully!");
+        for (const fPath of filesToChmod) {
+          await setExecutablePermissions(fPath);
+        }
         return true;
-      }
-
-      if (result.missingUrl) {
-        this.log(`Missing file for URL: ${result.missingUrl}`);
-        const filePath = urlToPath(result.missingUrl, this.tmpDir);
-        await this.downloadFile(result.missingUrl, filePath, timeout);
-        attempts++;
       } else {
-        throw new Error("Unexpected error from eget WASM");
+        this.log(`Attempt ${attempts + 1}: eget failed - ${result.error}`);
+        if (result.url) {
+          const filePathToDownload = urlToPath(result.url, this.tmpDir);
+          try {
+            await this.downloadFile(result.url, filePathToDownload, timeout);
+            attempts++;
+          } catch (downloadError) {
+            this.log(`Download failed for ${result.url}: ${downloadError.message}`);
+            return false;
+          }
+        } else {
+          this.log(`eget failed with no recovery URL. Error: ${result.error}`);
+          return false;
+        }
       }
     }
 
-    throw new Error(`Max attempts (${maxAttempts}) reached. Download failed.`);
+    this.log(`Max attempts (${maxAttempts}) reached. Download failed for ${repo}.`);
+    return false;
   }
 
   /**
@@ -460,10 +538,15 @@ export class Eget {
    */
   async cleanup() {
     try {
+      await stat(this.tmpDir); // Check existence before rm
       await rm(this.tmpDir, { recursive: true, force: true });
-      this.log("Cleaned up temporary files");
+      this.log(`Cleaned up temporary files in ${this.tmpDir}`);
     } catch (error) {
-      console.warn("Could not clean up temporary files:", error.message);
+      if (error.code === "ENOENT") {
+        this.log(`Temporary directory ${this.tmpDir} not found, no cleanup needed.`);
+      } else {
+        console.warn(`Could not clean up temporary files in ${this.tmpDir}:`, error.message);
+      }
     }
   }
 }
@@ -474,7 +557,6 @@ export class Eget {
  *
  * @param {string} repo - GitHub repository in format 'owner/repo'
  * @param {DownloadOptions & EgetOptions} [options={}] - Combined download and eget options
- * @param {string} [options.wasmPath] - Path to eget.wasm file (defaults to bundled version)
  * @param {string} [options.tmpDir='./tmp'] - Temporary directory for downloads
  * @param {boolean} [options.verbose=false] - Enable verbose logging
  * @returns {Promise<boolean>} True if download succeeded, false otherwise
@@ -502,8 +584,8 @@ export class Eget {
  */
 export async function eget(repo, options = {}) {
   // Separate eget constructor options from download options
-  const { wasmPath, tmpDir, verbose, ...downloadOptions } = options;
-  const egetInstance = new Eget({ tmpDir, verbose, wasmPath });
+  const { tmpDir, verbose, ...downloadOptions } = options;
+  const egetInstance = new Eget({ tmpDir, verbose });
 
   try {
     return await egetInstance.download(repo, downloadOptions);

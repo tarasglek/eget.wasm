@@ -5,19 +5,12 @@ import { join } from "node:path";
 import { Eget, eget, detectSystem } from "../eget.js";
 
 const TIMEOUT_MS = 30_000;
-const TEST_WASM_PATH = "../eget.wasm";
 const TEST_TMP_DIR = "../test-tmp";
 
 describe("Eget WASM Node.js Wrapper", { timeout: TIMEOUT_MS }, () => {
   let egetInstance;
 
   before(async () => {
-    try {
-      await access(TEST_WASM_PATH);
-    } catch (error) {
-      throw new Error("eget.wasm not found. Run `npm run build-wasm` first.");
-    }
-
     egetInstance = new Eget({
       tmpDir: TEST_TMP_DIR,
       verbose: true,
@@ -36,13 +29,6 @@ describe("Eget WASM Node.js Wrapper", { timeout: TIMEOUT_MS }, () => {
   });
 
   describe("Eget constructor", () => {
-    test("should create instance with valid wasm path", () => {
-      const instance = new Eget({ wasmPath: TEST_WASM_PATH });
-      assert.strictEqual(instance.wasmPath, TEST_WASM_PATH);
-      assert.strictEqual(instance.tmpDir, "./tmp");
-      assert.strictEqual(instance.verbose, false);
-    });
-
     test("should create instance with options", () => {
       const instance = new Eget({
         tmpDir: "/custom/tmp",
@@ -137,15 +123,6 @@ describe("Eget WASM Node.js Wrapper", { timeout: TIMEOUT_MS }, () => {
       // Just verify it returns a result object
       assert.ok(typeof result === "object");
       assert.ok(typeof result.success === "boolean");
-    });
-
-    test("should handle missing WASM file", async () => {
-      const badEget = new Eget({ wasmPath: "./nonexistent.wasm" });
-
-      await assert.rejects(
-        () => badEget.run(["--help"]),
-        /Failed to read WASM file/
-      );
     });
   });
 
