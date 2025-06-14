@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { WASI } from "node:wasi";
 import { randomUUID } from "node:crypto";
 import { tmpdir as osTmpDir } from "node:os";
+import { cwd } from "node:process";
 
 // We expect to find eget.wasm in the same dir as eget.js
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +29,6 @@ const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
  * @typedef {Object} DownloadOptions
  * @property {string} [system] - Target system (e.g., 'linux/amd64'). Auto-detected if not provided
  * @property {string} [asset] - Asset name pattern to match
- * @property {string} [output='.'] - Output directory
  * @property {string} [tag] - Specific release tag
  * @property {boolean} [preRelease=false] - Include pre-release versions
  * @property {boolean} [all=false] - Download all assets
@@ -94,20 +94,25 @@ function urlToPath(url, tmpDir) {
  * @returns {EgetError} An object containing the parsed error information.
  */
 function parseEgetError(errorStr) {
-  try {
-    const errorObj = JSON.parse(errorStr);
-    return {
-      path: errorObj.path || null,
-      url: errorObj.url || null,
-      error: errorObj.error || "unknown error"
-    };
-  } catch {
-    return {
-      path: null,
-      url: null,
-      error: errorStr
+  const jsonMatch = errorStr.match(/\{.*\}/s);
+  if (jsonMatch) {
+    try {
+      const errorObj = JSON.parse(jsonMatch[0]);
+      return {
+        path: errorObj.path || null,
+        url: errorObj.url || null,
+        error: errorObj.error || "unknown error"
+      };
+    } catch {
+      // If JSON parsing fails, fall back to the original string
     }
   }
+
+  return {
+    path: null,
+    url: null,
+    error: errorStr
+  };
 }
 
 /**
@@ -206,6 +211,7 @@ async function setExecutablePermissions(filePath) {
   }
 
   try {
+    this.log(`Setting executable permissions on ${filePath}`)
     const stats = await stat(filePath);
     const shouldBeExecutable = await isExecutableFile(filePath, stats);
     if (shouldBeExecutable) {
@@ -366,7 +372,7 @@ export class Eget {
     await this.ensureDir(this.tmpDir);    
 
     // Ensure WASM's CWD exists
-    const wasmCwd = resolve(runOptions.cwd || process.cwd());
+    const wasmCwd = resolve(runOptions.cwd || cwd());
     await this.ensureDir(wasmCwd);
 
     const wasi = new WASI({
@@ -433,7 +439,6 @@ export class Eget {
     const {
       system = detectSystem(),
       asset = null,
-      output = ".",
       tag = null,
       preRelease = false,
       all = false,
@@ -447,9 +452,13 @@ export class Eget {
       timeout = 30000
     } = options;
 
+    const effectiveOutputPath = cwd();
+
     // Build eget arguments
     const args = [];
 
+    // We always run in non-interactive mode, since we aren't in a shell with user input.
+    // If further user action is required, we'll error and users can try again.
     args.push("--non-interactive");
 
     if (tag) args.push("--tag", tag);
@@ -477,8 +486,6 @@ export class Eget {
     args.push(repo);
 
     this.log(`Running eget with args: ${args.join(" ")}`);
-
-    const effectiveOutputPath = resolve(output);
 
     // Keep trying until we have all required files
     let attempts = 0;
