@@ -454,7 +454,7 @@ Application Options:
       --verify-sha256= verify the downloaded asset checksum against the one provided
       --rate           show GitHub API rate limiting information
   -r, --remove         remove the given file from $EGET_BIN or the current directory
-      --non-interactive    do not prompt for user input
+      --non-interactive    do not prompt for user input. If user input is required, eget will exit with an error.
   -v, --version        show version information
   -h, --help           show this help message
   -D, --download-all   download all projects defined in the config file

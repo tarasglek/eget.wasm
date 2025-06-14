@@ -34,7 +34,7 @@ type CliFlags struct {
 	Verify      *string   `long:"verify-sha256" description:"verify the downloaded asset checksum against the one provided"`
 	Rate        bool      `long:"rate" description:"show GitHub API rate limiting information"`
 	Remove         *bool     `short:"r" long:"remove" description:"remove the given file from $EGET_BIN or the current directory"`
-	NonInteractive *bool     `long:"non-interactive" description:"do not prompt for user input"`
+	NonInteractive *bool     `long:"non-interactive" description:"do not prompt for user input. If user input is required, eget will exit with an error."`
 	Version        bool      `short:"v" long:"version" description:"show version information"`
 	Help        bool      `short:"h" long:"help" description:"show this help message"`
 	DownloadAll bool      `short:"D" long:"download-all" description:"download all projects defined in the config file"`
