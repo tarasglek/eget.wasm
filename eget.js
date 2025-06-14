@@ -450,6 +450,8 @@ export class Eget {
     // Build eget arguments
     const args = [];
 
+    args.push("--non-interactive");
+
     if (tag) args.push("--tag", tag);
     if (preRelease) args.push("--pre-release");
     // --source - download the source code for the target repo instead of a release
