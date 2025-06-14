@@ -51,5 +51,6 @@ version:
 clean:
 	rm -f test/eget.1 test/fd test/micro test/nvim test/pandoc test/rg.exe
 	rm -rf dist
+	rm -f eget.wasm
 
 .PHONY: build clean install package version fmt vet test
