@@ -21,7 +21,7 @@ vet:
 eget:
 	go build -trimpath -ldflags "-s -w $(GOVARS)" .
 
-eget.wasm:
+eget.wasm: *.go
 	GOOS=wasip1 GOARCH=wasm go build -o eget.wasm -ldflags="-s -w" -trimpath
 
 test: eget
