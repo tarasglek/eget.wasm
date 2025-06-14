@@ -5,6 +5,10 @@ todo.txt
 eget.1
 /test/*
 !/test/test_eget.go
+!/test/eget.test.js
 !/test/eget.toml
 .eget.toml
 .aider*
+/types/*
+/node_modules/*
+eget.wasm

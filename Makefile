@@ -21,6 +21,9 @@ vet:
 eget:
 	go build -trimpath -ldflags "-s -w $(GOVARS)" .
 
+eget.wasm: *.go
+	GOOS=wasip1 GOARCH=wasm go build -o eget.wasm -ldflags="-s -w" -trimpath
+
 test: eget
 	cd test; EGET_CONFIG=eget.toml EGET_BIN= TEST_EGET=../eget go run test_eget.go
 
@@ -48,5 +51,6 @@ version:
 clean:
 	rm -f test/eget.1 test/fd test/micro test/nvim test/pandoc test/rg.exe
 	rm -rf dist
+	rm -f eget.wasm
 
 .PHONY: build clean install package version fmt vet test
