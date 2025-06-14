@@ -119,7 +119,7 @@ header: Eget Manual
 
   `--non-interactive`
 
-:    Do not prompt for user input. If a choice is required, eget will exit with an error.
+:    Do not prompt for user input. If user input is required, eget will exit with an error.
 
   `-k, --disable-ssl`
 
