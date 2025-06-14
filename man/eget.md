@@ -117,6 +117,10 @@ header: Eget Manual
 
 :    Remove the target file from `$EGET_BIN` (or the current directory if unset). Note that this flag is boolean, and means eget will treat `TARGET` as a file to be removed.
 
+  `--non-interactive`
+
+:    Do not prompt for user input. If a choice is required, eget will exit with an error.
+
   `-k, --disable-ssl`
 
 :    Disable SSL certificate verification for GET requests. Cannot be used in combination with a `GITHUB_TOKEN`.

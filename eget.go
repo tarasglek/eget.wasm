@@ -261,7 +261,10 @@ func writeFile(data []byte, rename string, mode fs.FileMode) error {
 // Would really like generics to implement this...
 // Make the user select one of the choices and return the index of the
 // selection.
-func userSelect(choices []interface{}) int {
+func userSelect(choices []interface{}, nonInteractive bool) int {
+	if nonInteractive {
+		fatal("multiple candidates found, but interactive mode is disabled")
+	}
 	for i, c := range choices {
 		fmt.Fprintf(os.Stderr, "(%d) %v\n", i+1, c)
 	}
@@ -463,7 +466,7 @@ func main() {
 		for i := range candidates {
 			choices[i] = path.Base(candidates[i])
 		}
-		choice := userSelect(choices)
+		choice := userSelect(choices, cli.NonInteractive != nil && *cli.NonInteractive)
 		url = candidates[choice-1]
 	} else if err != nil {
 		fatal(err)
@@ -543,7 +546,7 @@ func main() {
 			choices[i] = bins[i]
 		}
 		choices[len(bins)] = "all"
-		choice := userSelect(choices)
+		choice := userSelect(choices, cli.NonInteractive != nil && *cli.NonInteractive)
 		if choice == len(bins)+1 {
 			opts.All = true
 		} else {
