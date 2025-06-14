@@ -261,9 +261,14 @@ func writeFile(data []byte, rename string, mode fs.FileMode) error {
 // Would really like generics to implement this...
 // Make the user select one of the choices and return the index of the
 // selection.
-func userSelect(choices []interface{}, nonInteractive bool) int {
+func userSelect(choices []interface{}, nonInteractive bool, hint string) int {
 	if nonInteractive {
-		fatal("multiple candidates found, but interactive mode is disabled")
+		fmt.Fprintln(os.Stderr, "Multiple candidates found, but interactive mode is disabled.")
+		fmt.Fprintln(os.Stderr, "Please select one of the following candidates:")
+		for _, c := range choices {
+			fmt.Fprintf(os.Stderr, "  - %v\n", c)
+		}
+		fatal(fmt.Sprintf("Use the %s flag to select one of the above candidates.", hint))
 	}
 	for i, c := range choices {
 		fmt.Fprintf(os.Stderr, "(%d) %v\n", i+1, c)
@@ -466,7 +471,7 @@ func main() {
 		for i := range candidates {
 			choices[i] = path.Base(candidates[i])
 		}
-		choice := userSelect(choices, cli.NonInteractive != nil && *cli.NonInteractive)
+		choice := userSelect(choices, cli.NonInteractive != nil && *cli.NonInteractive, "--asset")
 		url = candidates[choice-1]
 	} else if err != nil {
 		fatal(err)
@@ -546,7 +551,7 @@ func main() {
 			choices[i] = bins[i]
 		}
 		choices[len(bins)] = "all"
-		choice := userSelect(choices, cli.NonInteractive != nil && *cli.NonInteractive)
+		choice := userSelect(choices, cli.NonInteractive != nil && *cli.NonInteractive, "--file")
 		if choice == len(bins)+1 {
 			opts.All = true
 		} else {
