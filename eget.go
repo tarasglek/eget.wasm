@@ -263,8 +263,7 @@ func writeFile(data []byte, rename string, mode fs.FileMode) error {
 // selection.
 func userSelect(choices []interface{}, nonInteractive bool, hint string) int {
 	if nonInteractive {
-		fmt.Fprintln(os.Stderr, "Multiple candidates found, but interactive mode is disabled.")
-		fmt.Fprintln(os.Stderr, "Please select one of the following candidates:")
+		fmt.Fprintln(os.Stderr, "Error: Multiple candidates found:")
 		for _, c := range choices {
 			fmt.Fprintf(os.Stderr, "  - %v\n", c)
 		}
