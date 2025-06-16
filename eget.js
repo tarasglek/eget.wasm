@@ -23,7 +23,7 @@ const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
 /**
  * @typedef {Object} EgetOptions
  * @property {string} [cwd] - Host's working directory for final output (default process.cwd()).
- * @property {string} [tmpDir='./eget_tmp'] - Temporary directory for downloaded files
+ * @property {string} [tmpDir='./eget'] - Temporary directory for downloaded files
  * @property {boolean} [verbose=false] - Enable verbose logging
  */
 
@@ -46,7 +46,7 @@ const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
  * @property {string} [file] - Extract specific file from archive
  * @property {string} [to] - Path relative to the Eget instance's `cwd`.
  *   If a single asset results, 'to' is its target path.
- *   If multiple assets or --extract-all, 'to' is a subdirectory.
+ *   If multiple assets or --all, 'to' is a subdirectory.
  * @property {boolean} [quiet=false] - Suppress output
  * @property {boolean} [upgrade=false] - Only upgrade if newer version available
  * @property {string} [verify] - SHA256 hash to verify download
@@ -250,7 +250,7 @@ export class Eget {
     }
 
     /** @type {string} */
-    this.tmpDir = resolve(options.tmpDir || "./.eget_tmp");
+    this.tmpDir = resolve(options.tmpDir || "./.eget");
 
     /** @type {string} */
     this.cwd = resolve(
@@ -462,7 +462,7 @@ export class Eget {
 
     if (tag) args.push("--tag", tag);
     if (preRelease) args.push("--pre-release");
-    if (source) args.push("--source")
+    if (source) args.push("--source");
     if (system) args.push("--system", system);
     if (file) args.push("--file", file);
     if (all) args.push("--all");
@@ -472,9 +472,9 @@ export class Eget {
     if (asset) args.push("--asset", asset);
     if (verify) args.push("--verify-sha256", verify);
     if (removeArchive) args.push("--remove-archive");
-    if (extractAll) args.push("--extract-all");
+    if (extractAll) args.push("--all");
     // TODO - some others to consider adding...
-    // 
+    //
     // --sha256         show the SHA-256 hash of the downloaded asset
     // --rate           show GitHub API rate limiting information
     // -r, --remove     remove the given file from $EGET_BIN or the current directory
@@ -630,6 +630,7 @@ export class Eget {
  * @param {string} [options.cwd] - Host working directory for final output.
  *   Defaults to process.cwd().
  * @param {boolean} [options.verbose=false] - Enable verbose logging
+ * @param {boolean} [options.skipCleanup=false] - Whether to skip automatic cleanup of temp files (for debugging)
  * @returns {Promise<boolean>} True if download succeeded, false otherwise
  * @throws {Error} If repo is not provided or download fails
  *
@@ -656,12 +657,14 @@ export class Eget {
  */
 export async function eget(repo, options = {}) {
   // Separate eget constructor options from download options
-  const { cwd, tmpDir, verbose, ...downloadOptions } = options;
+  const { cwd, tmpDir, verbose, skipCleanup, ...downloadOptions } = options;
   const egetInstance = new Eget({ cwd, tmpDir, verbose });
 
   try {
     return await egetInstance.download(repo, downloadOptions);
   } finally {
-    await egetInstance.cleanup();
+    if (!skipCleanup) {
+      await egetInstance.cleanup();
+    }
   }
 }
