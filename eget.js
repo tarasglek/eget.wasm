@@ -1,6 +1,5 @@
 import {
   readFile,
-  writeFile,
   open,
   mkdir,
   rm,
@@ -9,21 +8,34 @@ import {
   readdir,
   rename,
 } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WASI } from "node:wasi";
 import { randomUUID } from "node:crypto";
 import { tmpdir as osTmpDir } from "node:os";
 import { cwd } from "node:process";
+import { pipeline } from "node:stream/promises";
+import { Transform } from "node:stream";
 
 // We expect to find eget.wasm in the same dir as eget.js
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
 
 /**
+ * Callback function for download progress updates.
+ * @callback ProgressCallback
+ * @param {string} url - The URL being downloaded
+ * @param {number} currentBytes - The number of bytes downloaded so far.
+ * @param {number} totalBytes - The total number of bytes to download.
+ *   Can be -1 if the total size is unknown (e.g., Content-Length header missing).
+ */
+
+/**
  * @typedef {Object} EgetOptions
  * @property {string} [cwd] - Host's working directory for final output (default process.cwd()).
  * @property {string} [tmpDir='./eget'] - Temporary directory for downloaded files
+ * @property {ProgressCallback} [onProgress] - Optional callback for download progress updates.
  * @property {boolean} [verbose=false] - Enable verbose logging
  */
 
@@ -55,6 +67,7 @@ const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
  * @property {boolean} [source=false] - Download the source code for the target repo instead of a release
  * @property {boolean} [downloadOnly=false] - Stop after downloading the asset (no extraction)
  * @property {number} [timeout=30000] - Timeout (ms) for downloads
+ * @property {ProgressCallback} [onProgress] - Optional callback for download progress updates.
  */
 
 /**
@@ -248,6 +261,9 @@ export class Eget {
     if (options.verbose && typeof options.verbose !== "boolean") {
       throw new TypeError("verbose must be a boolean");
     }
+    if (options.onProgress && typeof options.onProgress !== "function") {
+      throw new TypeError("onProgress must be a callback function");
+    }
 
     /** @type {string} */
     this.tmpDir = resolve(options.tmpDir || "./.eget");
@@ -260,6 +276,9 @@ export class Eget {
 
     /** @type {boolean} */
     this.verbose = options.verbose || false;
+
+    /** @type {function} */
+    this.onProgress = options.onProgress;
   }
 
   /**
@@ -289,29 +308,92 @@ export class Eget {
    * Downloads a file from a URL to a local path.
    * @param {string} url - URL to download from
    * @param {string} filePath - Local file path to save to
-   * @param {number} timeout - The timeout (ms) to wait (defaults to 30s)
-   * @throws {Error} If download fails or network error occurs
+   * @param {ProgressCallback | undefined} onProgress - Optional callback for progress updates.
+   *   Receives (currentBytes, totalBytes). totalBytes may be undefined if
+   *   Content-Length header is not available.
+   * @param {number | undefined} timeout - The timeout (ms) to wait (defaults to 30s)
    */
-  async downloadFile(url, filePath, timeoutMs = 30000) {
-    this.log(`Downloading: ${url} to ${filePath}`);
+  async downloadFile(url, filePath, onProgress, timeoutMs = 30000) {
+    let fileStream;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeoutId);
+    const logFn = this.log.bind(this);
+    const onProgressCallback =
+      typeof onProgress === "function"
+        ? (url, currentBytes, totalBytes) => {
+            try {
+              onProgress(url, currentBytes, totalBytes);
+            } catch (e) {
+              logFn(`Error in onProgress callback: ${e.message}`);
+            }
+          }
+        : () => {
+            /* no-op */
+          };
 
+    try {
+      this.log(`Downloading: ${url} to ${filePath}`);
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "eget.wasm",
+        },
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
+      if (!response.body) {
+        throw new Error("Response body is null.");
+      }
 
+      // Get the expected file size, or use -1 if unknown
+      const contentLength = response.headers.get("Content-Length");
+      const totalBytes = contentLength ? parseInt(contentLength, 10) : -1;
+
+      // Indicate that the download has begun
+      onProgressCallback(url, 0, totalBytes);
+
+      // Stream the file in, calling onProgress as bytes are received
       await this.ensureDir(dirname(filePath));
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      await writeFile(filePath, buffer);
+      fileStream = createWriteStream(filePath);
+
+      let receivedBytes = 0;
+      const progressTransform = new Transform({
+        transform(chunk, _encoding, callback) {
+          receivedBytes += chunk.length;
+          onProgressCallback(url, receivedBytes, totalBytes);
+          callback(null, chunk);
+        },
+      });
+
+      await pipeline(response.body, progressTransform, fileStream, {
+        signal: controller.signal,
+      });
+
+      const finalTotal = totalBytes === -1 ? receivedBytes : totalBytes;
+      onProgressCallback(url, receivedBytes, finalTotal);
+
       this.log(`Saved to: ${filePath}`);
     } catch (error) {
-      clearTimeout(timeoutId);
+      // Ensure file stream is destroyed and partial file is removed
+      if (fileStream && !fileStream.destroyed) {
+        fileStream.destroy();
+      }
+      try {
+        await rm(filePath, { force: true });
+        this.log(
+          `Removed partial file ${filePath} due to error: ${error.message}`
+        );
+      } catch (cleanupError) {
+        // Log if stat failed (file doesn't exist) or rm failed
+        if (cleanupError.code !== "ENOENT") {
+          this.log(
+            `Failed to remove partial file ${filePath}: ${cleanupError.message}`
+          );
+        }
+      }
+
       if (error.name === "AbortError") {
         throw new Error(`Download timed out for ${url}`);
       }
@@ -322,6 +404,12 @@ export class Eget {
         throw error; // Re-throw HTTP errors as-is
       }
       throw new Error(`Failed to download ${url}: ${error.message}`);
+    } finally {
+      clearTimeout(timeoutId);
+      // Ensure stream is closed if it exists and pipeline didn't error/finish
+      if (fileStream && !fileStream.closed && !fileStream.destroyed) {
+        fileStream.destroy();
+      }
     }
   }
 
@@ -451,6 +539,7 @@ export class Eget {
       source = false,
       downloadOnly = false,
       timeout = 30000,
+      onProgress = this.onProgress,
     } = options;
 
     // Build eget arguments
@@ -566,7 +655,12 @@ export class Eget {
             const filePathToDownload = urlToPath(result.url, this.tmpDir);
             try {
               this.log(`requesting download: ${result.url}`);
-              await this.downloadFile(result.url, filePathToDownload, timeout);
+              await this.downloadFile(
+                result.url,
+                filePathToDownload,
+                onProgress,
+                timeout
+              );
               attempts++;
             } catch (downloadError) {
               this.log(
@@ -657,8 +751,9 @@ export class Eget {
  */
 export async function eget(repo, options = {}) {
   // Separate eget constructor options from download options
-  const { cwd, tmpDir, verbose, skipCleanup, ...downloadOptions } = options;
-  const egetInstance = new Eget({ cwd, tmpDir, verbose });
+  const { cwd, tmpDir, verbose, skipCleanup, onProgress, ...downloadOptions } =
+    options;
+  const egetInstance = new Eget({ cwd, tmpDir, verbose, onProgress });
 
   try {
     return await egetInstance.download(repo, downloadOptions);
