@@ -59,12 +59,8 @@ export interface DownloadOptions {
    * If multiple assets or `all` is included, 'to' is a subdirectory.
    */
   to?: string;
-  /** Suppress output. */
-  quiet?: boolean;
   /** Only upgrade if newer version available. */
-  upgrade?: boolean;
-  /** SHA256 hash to verify download. */
-  verify?: string;
+  upgradeOnly?: boolean;
   /** Remove archive after extraction. */
   removeArchive?: boolean;
   /** Extract all files from archive. */

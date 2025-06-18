@@ -18,10 +18,6 @@ import { cwd } from "node:process";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 
-// We expect to find eget.wasm in the same dir as eget.js
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
-
 /**
  * Detects the current system platform and architecture as expected by eget.
  * @returns {string} System string in format 'platform/arch' (e.g., 'linux/amd64')
@@ -177,12 +173,16 @@ export class Eget {
       return Eget.wasmCompilationPromise;
     }
 
-    this.log(`Initiating compilation for WASM module: ${DEFAULT_WASM_PATH}`);
+    // We expect to find eget.wasm in the same dir as eget.js
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const egetWasmPath = join(__dirname, "eget.wasm");
+
+    this.log(`Initiating compilation for WASM module: ${egetWasmPath}`);
     Eget.wasmCompilationPromise = (async () => {
       try {
-        const wasmBytes = await readFile(DEFAULT_WASM_PATH);
+        const wasmBytes = await readFile(egetWasmPath);
         const module = await WebAssembly.compile(wasmBytes);
-        this.log(`Compiled WASM module: ${DEFAULT_WASM_PATH}`);
+        this.log(`Compiled WASM module: ${egetWasmPath}`);
         return module;
       } catch (error) {
         // If compilation fails, reset the promise so a future call can retry.
@@ -190,15 +190,15 @@ export class Eget {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         this.log(
-          `Failed to load/compile WASM ${DEFAULT_WASM_PATH}: ${errorMessage}`
+          `Failed to load/compile WASM ${egetWasmPath}: ${errorMessage}`
         );
         if (errorMessage.includes("read")) {
           throw new Error(
-            `Failed to read WASM file ${DEFAULT_WASM_PATH}: ${errorMessage}`
+            `Failed to read WASM file ${egetWasmPath}: ${errorMessage}`
           );
         }
         throw new Error(
-          `Failed to compile WASM module ${DEFAULT_WASM_PATH}: ${errorMessage}`
+          `Failed to compile WASM module ${egetWasmPath}: ${errorMessage}`
         );
       }
     })();
@@ -491,9 +491,7 @@ export class Eget {
       all = false,
       file = null,
       to = null,
-      quiet = false,
-      upgrade = false,
-      verify = null,
+      upgradeOnly = false,
       removeArchive = false,
       extractAll = false,
       source = false,
@@ -502,12 +500,18 @@ export class Eget {
       onProgress = this.onProgress,
     } = options;
 
-    // Build eget arguments
     const args = [];
 
     // We always run in non-interactive mode, since we aren't in a shell with user input.
     // If further user action is required, we'll error and users can try again.
     args.push("--non-interactive");
+    // We also use --quiet by default, since there's nothing to report back
+    args.push("--quiet");
+    // HACK: due to incompatibilities between node.js and WASI's filesystem (specifically
+    // how the path `.` gets handled, we don't pass any requested `--to` value through to
+    // WASM, since we'll do everything in the WASI mapped `/` dir. Instead, we force all
+    // operations to happen in `/` by overriding `--to`, then handle moving files in JS.
+    args.push("--to", "/");
 
     if (tag) args.push("--tag", tag);
     if (preRelease) args.push("--pre-release");
@@ -515,25 +519,18 @@ export class Eget {
     if (system) args.push("--system", system);
     if (file) args.push("--file", file);
     if (all) args.push("--all");
-    if (quiet) args.push("--quiet");
     if (downloadOnly) args.push("--download-only");
-    if (upgrade) args.push("--upgrade-only");
+    if (upgradeOnly) args.push("--upgrade-only");
     if (asset) args.push("--asset", asset);
-    if (verify) args.push("--verify-sha256", verify);
     if (removeArchive) args.push("--remove-archive");
     if (extractAll) args.push("--all");
     // TODO - some others to consider adding...
     //
-    // --sha256         show the SHA-256 hash of the downloaded asset
-    // --rate           show GitHub API rate limiting information
-    // -r, --remove     remove the given file from $EGET_BIN or the current directory
-    // -D, --download-all   download all projects defined in the config file
-
-    // HACK: due to incompatibilities between node.js and WASI's filesystem (specifically
-    // how the path `.` gets handled, we don't pass any requested `--to` value through to
-    // WASM, since we'll do everything in the WASI mapped `/` dir. Instead, we force all
-    // operations to happen in `/` by overriding `--to`, then handle moving files in JS.
-    args.push("--to", "/");
+    // --sha256           show the SHA-256 hash of the downloaded asset
+    // --rate             show GitHub API rate limiting information
+    // -r, --remove       remove the given file from $EGET_BIN or the current directory
+    // -D, --download-all download all projects defined in the config file
+    // --verify-sha256    SHA256 hash to verify download.
 
     args.push(repo);
 
@@ -560,12 +557,12 @@ export class Eget {
 
           const extractedItems = await readdir(downloadTempDir);
           if (extractedItems.length === 0) {
-            if (upgrade) {
+            if (upgradeOnly) {
               this.log(
-                "eget.wasm completed (upgrade-only), no new version or no files produced."
+                "completed (upgrade-only), no new version or no files produced."
               );
             } else {
-              this.log("eget.wasm completed but produced no new files.");
+              this.log("completed but produced no new files.");
             }
             return true;
           }
