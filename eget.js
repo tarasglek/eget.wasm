@@ -23,62 +23,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WASM_PATH = join(__dirname, "eget.wasm");
 
 /**
- * Callback function for download progress updates.
- * @callback ProgressCallback
- * @param {string} url - The URL being downloaded
- * @param {number} currentBytes - The number of bytes downloaded so far.
- * @param {number} totalBytes - The total number of bytes to download.
- *   Can be -1 if the total size is unknown (e.g., Content-Length header missing).
- */
-
-/**
- * @typedef {Object} EgetOptions
- * @property {string} [cwd] - Host's working directory for final output (default process.cwd()).
- * @property {string} [tmpDir='./eget'] - Temporary directory for downloaded files
- * @property {ProgressCallback} [onProgress] - Optional callback for download progress updates.
- * @property {boolean} [verbose=false] - Enable verbose logging
- */
-
-/**
- * @typedef {object} EgetError
- * @property {string|null} path - The file path associated with the error, if available.
- * @property {string|null} url - The URL associated with the error, if available.
- * @property {string} error - The error message. Defaults to "unknown error"
- *   if the original error string is valid JSON but lacks an error field,
- *   or the original error string if it's not valid JSON.
- */
-
-/**
- * @typedef {Object} DownloadOptions
- * @property {string} [system] - Target system (e.g., 'linux/amd64'). Auto-detected if not provided
- * @property {string} [asset] - Asset name pattern to match
- * @property {string} [tag] - Specific release tag
- * @property {boolean} [preRelease=false] - Include pre-release versions
- * @property {boolean} [all=false] - Download all assets
- * @property {string} [file] - Extract specific file from archive
- * @property {string} [to] - Path relative to the Eget instance's `cwd`.
- *   If a single asset results, 'to' is its target path.
- *   If multiple assets or --all, 'to' is a subdirectory.
- * @property {boolean} [quiet=false] - Suppress output
- * @property {boolean} [upgrade=false] - Only upgrade if newer version available
- * @property {string} [verify] - SHA256 hash to verify download
- * @property {boolean} [removeArchive=false] - Remove archive after extraction
- * @property {boolean} [extractAll=false] - Extract all files from archive
- * @property {boolean} [source=false] - Download the source code for the target repo instead of a release
- * @property {boolean} [downloadOnly=false] - Stop after downloading the asset (no extraction)
- * @property {number} [timeout=30000] - Timeout (ms) for downloads
- * @property {ProgressCallback} [onProgress] - Optional callback for download progress updates.
- */
-
-/**
- * @typedef {Object} RunResult
- * @property {boolean} success - Whether the operation succeeded
- * @property {string|null} [url] - URL that needs to be downloaded (if success is false)
- * @property {string|null} [path] - Path associated with the error
- * @property {string} [error] - Error message
- */
-
-/**
  * Detects the current system platform and architecture as expected by eget.
  * @returns {string} System string in format 'platform/arch' (e.g., 'linux/amd64')
  */
@@ -101,6 +45,20 @@ export function detectSystem() {
 }
 
 /**
+ * Ensures a directory exists, creating it if necessary.
+ * @param {string} dirPath - Directory path to ensure
+ * @throws {NodeJS.ErrnoException} If directory cannot be created
+ */
+async function ensureDir(dirPath) {
+  try {
+    await mkdir(dirPath, { recursive: true });
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error)?.code !== "EEXIST")
+      throw error;
+  }
+}
+
+/**
  * Converts a URL to a local file path for caching.
  * @param {string} url - The URL to convert
  * @param {string} tmpDir - The temporary directory base path
@@ -119,7 +77,7 @@ function urlToPath(url, tmpDir) {
 /**
  * Parses stderr to extract useful info. eget WASM sends errors as JSON.
  * @param {string} errorStr - Error JSON string from eget WASM, or a plain error string.
- * @returns {EgetError} An object containing the parsed error information.
+ * @returns {import('./eget.d.ts').EgetError} An object containing the parsed error information.
  */
 function parseEgetError(errorStr) {
   const jsonMatch = errorStr.match(/\{.*\}/s);
@@ -193,9 +151,7 @@ async function fixExecutablePermissions(filePath) {
       }
     }
   } catch (error) {
-    throw new Error(`Could not fix permissions on ${filePath}:`, {
-      cause: error,
-    });
+    throw new Error(`Could not fix permissions on ${filePath}:`);
   }
 }
 
@@ -231,16 +187,18 @@ export class Eget {
       } catch (error) {
         // If compilation fails, reset the promise so a future call can retry.
         Eget.wasmCompilationPromise = null;
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         this.log(
-          `Failed to load/compile WASM ${DEFAULT_WASM_PATH}: ${error.message}`
+          `Failed to load/compile WASM ${DEFAULT_WASM_PATH}: ${errorMessage}`
         );
-        if (error.message.includes("read")) {
+        if (errorMessage.includes("read")) {
           throw new Error(
-            `Failed to read WASM file ${DEFAULT_WASM_PATH}: ${error.message}`
+            `Failed to read WASM file ${DEFAULT_WASM_PATH}: ${errorMessage}`
           );
         }
         throw new Error(
-          `Failed to compile WASM module ${DEFAULT_WASM_PATH}: ${error.message}`
+          `Failed to compile WASM module ${DEFAULT_WASM_PATH}: ${errorMessage}`
         );
       }
     })();
@@ -249,7 +207,7 @@ export class Eget {
 
   /**
    * Creates a new Eget instance.
-   * @param {EgetOptions} [options={}] - Configuration options
+   * @param {import('./eget.d.ts').EgetOptions} [options={}] - Configuration options
    */
   constructor(options = {}) {
     if (options.tmpDir && typeof options.tmpDir !== "string") {
@@ -277,30 +235,17 @@ export class Eget {
     /** @type {boolean} */
     this.verbose = options.verbose || false;
 
-    /** @type {function} */
+    /** @type {import('./eget.d.ts').ProgressCallback | undefined} */
     this.onProgress = options.onProgress;
   }
 
   /**
    * Logs a message to stderr if verbose mode is enabled.
-   * @param {string} message - Message to log
+   * @param {...any} message - Messages to log
    */
-  log(message) {
+  log(...message) {
     if (this.verbose) {
-      console.error(`[eget.wasm] ${message}`);
-    }
-  }
-
-  /**
-   * Ensures a directory exists, creating it if necessary.
-   * @param {string} dirPath - Directory path to ensure
-   * @throws {Error} If directory cannot be created
-   */
-  async ensureDir(dirPath) {
-    try {
-      await mkdir(dirPath, { recursive: true });
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      console.error("[eget.wasm]", ...message);
     }
   }
 
@@ -308,12 +253,10 @@ export class Eget {
    * Downloads a file from a URL to a local path.
    * @param {string} url - URL to download from
    * @param {string} filePath - Local file path to save to
-   * @param {ProgressCallback | undefined} onProgress - Optional callback for progress updates.
-   *   Receives (currentBytes, totalBytes). totalBytes may be undefined if
-   *   Content-Length header is not available.
-   * @param {number | undefined} timeout - The timeout (ms) to wait (defaults to 30s)
+   * @param {import('./eget.d.ts').ProgressCallback | undefined} onProgress - Optional callback for progress updates.
+   * @param {number | undefined} timeoutMs - The timeout (ms) to wait (defaults to 30s)
    */
-  async downloadFile(url, filePath, onProgress, timeoutMs = 30000) {
+  async downloadFile(url, filePath, onProgress, timeoutMs = 30_000) {
     let fileStream;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -321,11 +264,16 @@ export class Eget {
     const logFn = this.log.bind(this);
     const onProgressCallback =
       typeof onProgress === "function"
-        ? (url, currentBytes, totalBytes) => {
+        ? (
+            /** @type {string} */ url,
+            /** @type {number} */ currentBytes,
+            /** @type {number} */ totalBytes
+          ) => {
             try {
               onProgress(url, currentBytes, totalBytes);
             } catch (e) {
-              logFn(`Error in onProgress callback: ${e.message}`);
+              const errorMessage = e instanceof Error ? e.message : String(e);
+              logFn(`Error in onProgress callback: ${errorMessage}`);
             }
           }
         : () => {
@@ -355,7 +303,7 @@ export class Eget {
       onProgressCallback(url, 0, totalBytes);
 
       // Stream the file in, calling onProgress as bytes are received
-      await this.ensureDir(dirname(filePath));
+      await ensureDir(dirname(filePath));
       fileStream = createWriteStream(filePath);
 
       let receivedBytes = 0;
@@ -380,30 +328,34 @@ export class Eget {
       if (fileStream && !fileStream.destroyed) {
         fileStream.destroy();
       }
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       try {
         await rm(filePath, { force: true });
         this.log(
-          `Removed partial file ${filePath} due to error: ${error.message}`
+          `Removed partial file ${filePath} due to error: ${errorMessage}`
         );
       } catch (cleanupError) {
         // Log if stat failed (file doesn't exist) or rm failed
-        if (cleanupError.code !== "ENOENT") {
-          this.log(
-            `Failed to remove partial file ${filePath}: ${cleanupError.message}`
-          );
+        if (
+          /** @type {NodeJS.ErrnoException} */ (cleanupError)?.code !== "ENOENT"
+        ) {
+          this.log(`Failed to remove partial file ${filePath}`);
         }
       }
 
-      if (error.name === "AbortError") {
-        throw new Error(`Download timed out for ${url}`);
+      if (error instanceof Error) {
+        if (error.name === "AbortError") {
+          throw new Error(`Download timed out for ${url}`);
+        }
+        if (error.name === "TypeError" && error.message.includes("fetch")) {
+          throw new Error(`Network error downloading ${url}: ${error.message}`);
+        }
+        if (error.message.includes("HTTP")) {
+          throw error; // Re-throw HTTP errors as-is
+        }
       }
-      if (error.name === "TypeError" && error.message.includes("fetch")) {
-        throw new Error(`Network error downloading ${url}: ${error.message}`);
-      }
-      if (error.message.includes("HTTP")) {
-        throw error; // Re-throw HTTP errors as-is
-      }
-      throw new Error(`Failed to download ${url}: ${error.message}`);
+      throw new Error(`Failed to download ${url}: ${errorMessage}`);
     } finally {
       clearTimeout(timeoutId);
       // Ensure stream is closed if it exists and pipeline didn't error/finish
@@ -419,15 +371,18 @@ export class Eget {
    * @param {object} [runOptions={}] - Options for WASI execution
    * @param {string} [runOptions.wasmSandboxDir] - the directory on the host that will be
    *  mapped to `/` in WASI (i.e., WASM's CWD for output)
-   * @returns {Promise<RunResult>} Result of the operation
+   * @returns {Promise<import('./eget.d.ts').RunResult>} Result of the operation
    */
-  async run(args, runOptions) {
+  async run(args, runOptions = {}) {
     // We need a dir to hold eget's output, which we'll map to `/` in WASI
     const { wasmSandboxDir } = runOptions;
-    await this.ensureDir(wasmSandboxDir);
+    if (!wasmSandboxDir) {
+      throw new Error("wasmSandboxDir is required");
+    }
+    await ensureDir(wasmSandboxDir);
 
     // Ensure the host temporary directory for WASM cache exists
-    await this.ensureDir(this.tmpDir);
+    await ensureDir(this.tmpDir);
 
     // We need to capture stderr from eget
     const stderrFilePath = join(osTmpDir(), `eget.stderr_${randomUUID()}.txt`);
@@ -452,8 +407,8 @@ export class Eget {
     try {
       const module = await this.getWasmModule();
       const instance = await WebAssembly.instantiate(
-        module,
-        wasi.getImportObject()
+        /** @type {WebAssembly.Module} */ (module),
+        /** @type {WebAssembly.Imports} */ (wasi.getImportObject())
       );
 
       this.log(
@@ -474,7 +429,9 @@ export class Eget {
           await readFile(stderrFilePath, { encoding: "utf8" })
         ).trim();
       } catch (readError) {
-        this.log(`Failed to read stderr: ${readError.message}`);
+        const errorMessage =
+          readError instanceof Error ? readError.message : String(readError);
+        this.log(`Failed to read stderr: ${errorMessage}`);
       }
 
       const parsedError = parseEgetError(errorText);
@@ -485,13 +442,17 @@ export class Eget {
         await stderrFile?.close();
         await rm(stderrFilePath, { force: true });
       } catch (error) {
-        this.log(`unable to remove temporary stderr file: ${error.message}`);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        this.log(`unable to remove temporary stderr file: ${errorMessage}`);
       }
     }
   }
 
   /**
    * Recursively moves directory contents and fixes permissions
+   * @param {string} sourceDir - Source directory path
+   * @param {string} destDir - Destination directory path
    */
   async moveDirectoryContents(sourceDir, destDir) {
     const items = await readdir(sourceDir);
@@ -505,7 +466,7 @@ export class Eget {
         await rename(sourcePath, destPath);
         await fixExecutablePermissions.call(this, destPath);
       } else if (stats.isDirectory()) {
-        await this.ensureDir(destPath);
+        await ensureDir(destPath);
         await this.moveDirectoryContents(sourcePath, destPath);
       }
     }
@@ -514,9 +475,8 @@ export class Eget {
   /**
    * Downloads assets from a GitHub repository using eget.
    * @param {string} repo - GitHub repository in format 'owner/repo'
-   * @param {DownloadOptions} [options={}] - Download options
+   * @param {import('./eget.d.ts').DownloadOptions} [options={}] - Download options
    * @returns {Promise<boolean>} True if download succeeded, false otherwise
-   * @throws {Error} If repo is not provided or download fails after max attempts
    */
   async download(repo, options = {}) {
     if (!repo) {
@@ -587,7 +547,7 @@ export class Eget {
         this.tmpDir,
         `eget.download_${randomUUID()}`
       );
-      await this.ensureDir(downloadTempDir);
+      await ensureDir(downloadTempDir);
 
       try {
         this.log(`Running eget ${args.join(" ")}`);
@@ -631,14 +591,14 @@ export class Eget {
               finalItemPathOnHost = join(this.cwd, itemName);
             }
 
-            await this.ensureDir(dirname(finalItemPathOnHost));
+            await ensureDir(dirname(finalItemPathOnHost));
 
             if (itemStats.isFile()) {
               await rename(sourcePathInSandbox, finalItemPathOnHost);
               await fixExecutablePermissions.call(this, finalItemPathOnHost);
               this.log(`Moved ${itemName} to ${finalItemPathOnHost}`);
             } else if (itemStats.isDirectory()) {
-              await this.ensureDir(finalItemPathOnHost);
+              await ensureDir(finalItemPathOnHost);
               await this.moveDirectoryContents(
                 sourcePathInSandbox,
                 finalItemPathOnHost
@@ -663,9 +623,11 @@ export class Eget {
               );
               attempts++;
             } catch (downloadError) {
-              this.log(
-                `Download failed for ${result.url}: ${downloadError.message}`
-              );
+              const errorMessage =
+                downloadError instanceof Error
+                  ? downloadError.message
+                  : String(downloadError);
+              this.log(`Download failed for ${result.url}: ${errorMessage}`);
               return false;
             }
           } else {
@@ -679,7 +641,9 @@ export class Eget {
         try {
           await rm(downloadTempDir, { recursive: true, force: true });
         } catch (error) {
-          this.log(`Could not clean up download temp dir: ${error.message}`);
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          this.log(`Could not clean up download temp dir: ${errorMessage}`);
         }
       }
     }
@@ -700,14 +664,16 @@ export class Eget {
       await rm(this.tmpDir, { recursive: true, force: true });
       this.log(`Cleaned up temporary files in ${this.tmpDir}`);
     } catch (error) {
-      if (error.code === "ENOENT") {
+      if (/** @type {NodeJS.ErrnoException} */ (error)?.code !== "ENOENT") {
         this.log(
           `Temporary directory ${this.tmpDir} not found, no cleanup needed.`
         );
       } else {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         console.warn(
           `Could not clean up temporary files in ${this.tmpDir}:`,
-          error.message
+          errorMessage
         );
       }
     }
@@ -719,14 +685,8 @@ export class Eget {
  * Creates an Eget instance, downloads the specified repository, and cleans up temporary files.
  *
  * @param {string} repo - GitHub repository in format 'owner/repo'
- * @param {DownloadOptions & EgetOptions} [options={}] - Combined download and eget options
- * @param {string} [options.tmpDir='./.tmp'] - Temporary directory for downloads
- * @param {string} [options.cwd] - Host working directory for final output.
- *   Defaults to process.cwd().
- * @param {boolean} [options.verbose=false] - Enable verbose logging
- * @param {boolean} [options.skipCleanup=false] - Whether to skip automatic cleanup of temp files (for debugging)
+ * @param {import('./eget.d.ts').EgetFunctionOptions} [options={}] - Combined download and eget options
  * @returns {Promise<boolean>} True if download succeeded, false otherwise
- * @throws {Error} If repo is not provided or download fails
  *
  * @example
  * // Download sops for current platform to current dir

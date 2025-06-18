@@ -4,28 +4,26 @@
   "description": "eget WASM with node.js wrapper",
   "type": "module",
   "main": "eget.js",
-  "types": "./types/eget.d.ts",
+  "types": "eget.d.ts",
   "exports": {
     ".": {
       "import": "./eget.js",
-      "types": "./types/eget.d.ts"
+      "types": "./eget.d.ts"
     }
   },
   "files": [
     "eget.js",
-    "eget.wasm",
-    "types/"
+    "eget.d.ts",
+    "eget.wasm"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit --allowJs eget.js",
-    "build-wasm": "make eget.wasm",
-    "generate-types": "tsc eget.js --declaration --allowJs --emitDeclarationOnly --outDir types",
-    "build": "npm run build-wasm && npm run generate-types",
+    "typecheck": "tsc -p jsconfig.json",
+    "build": "make eget.wasm",
     "test": "node --test --test-force-exit test/eget.test.js"
   },
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^22.15.30",
+    "@types/node": "^22",
     "cli-progress": "^3.12.0",
     "pretty-bytes": "^7.0.0",
     "typescript": "^5.8.3"
