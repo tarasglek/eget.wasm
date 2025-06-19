@@ -150,9 +150,10 @@ describe("Eget WASM Node.js Wrapper", () => {
     test("should download gh and rename it using 'to'", async () => {
       const testDir = join(TEST_BASE_DIR, "gh-cli-test");
       const success = await eget("cli/cli", {
+        system: "linux/amd64",
         cwd: testDir,
         to: "gh-cli",
-        verbose: true
+        asset: ".deb",
       });
 
       assert.ok(success, "eget() should return true on success");
@@ -181,16 +182,15 @@ describe("Eget WASM Node.js Wrapper", () => {
       await mkdir(outputDir, { recursive: true });
 
       const success = await eget("neovim/neovim", {
+        system: "linux/amd64",
         cwd: testDir,
         to: "nvim-out",
         extractAll: true,
-        asset: "^.sha",
-        verbose: true
+        asset: "^arm64",
       });
 
       assert.ok(success, "eget() should return true on success");
-      await access(join(outputDir, "nvim"));
-      await access(join(outputDir, "vim.so"));
+      await access(join(outputDir, "nvim-linux-x86_64"));
     });
 
     // Additional Test: --source flag
@@ -233,12 +233,11 @@ describe("Eget WASM Node.js Wrapper", () => {
       await mkdir(outputDir, { recursive: true });
 
       const success = await eget("jgm/pandoc", {
-        tag: "3.1.9", // Use a specific, small release
+        system: "linux/amd64",
+        tag: "3.1.9",
         cwd: testDir,
         to: "output",
-        asset: ".zip",
         extractAll: true,
-        verbose: true
       });
 
       assert.ok(success, "eget() should return true on success");
