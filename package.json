@@ -19,12 +19,14 @@
   "scripts": {
     "typecheck": "tsc -p jsconfig.json",
     "build": "make eget.wasm",
-    "test": "node --test --test-force-exit test/eget.test.js"
+    "test": "node --test --test-force-exit test/eget.test.js",
+    "format": "prettier --write eget.d.ts eget.js test/eget.test.js"
   },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22",
     "cli-progress": "^3.12.0",
+    "prettier": "3.5.3",
     "pretty-bytes": "^7.0.0",
     "typescript": "^5.8.3"
   },

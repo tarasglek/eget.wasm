@@ -1,215 +1,246 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert";
-import { readdir, access } from "node:fs/promises";
-import { join } from "node:path";
+import { access, rm, mkdir, readdir, stat } from "node:fs/promises";
+import { join, resolve, basename } from "node:path";
 import { Eget, eget, detectSystem } from "../eget.js";
 
-const TIMEOUT_MS = 30_000;
-const TEST_TMP_DIR = "../test-tmp";
+// Timeouts
+const STANDARD_TIMEOUT = 30_000;
+const E2E_TIMEOUT = 120_000; // Longer for network-dependent tests
 
-describe("Eget WASM Node.js Wrapper", { timeout: TIMEOUT_MS }, () => {
-  let egetInstance;
+// Base directory for all test artifacts
+const TEST_BASE_DIR = resolve("./test-tmp");
 
+describe("Eget WASM Node.js Wrapper", () => {
+  // Clean up and create the base test directory once before all tests
   before(async () => {
-    egetInstance = new Eget({
-      tmpDir: TEST_TMP_DIR,
-      verbose: true,
-    });
+    await rm(TEST_BASE_DIR, { recursive: true, force: true });
+    await mkdir(TEST_BASE_DIR, { recursive: true });
   });
 
+  // Clean up the entire test directory after all tests are done
   after(async () => {
-    await egetInstance.cleanup();
+    await rm(TEST_BASE_DIR, { recursive: true, force: true });
   });
 
-  describe("detectSystem()", () => {
-    test("should return valid system string", () => {
+  // --- Unit Tests ---
+  describe("Unit Tests", { timeout: STANDARD_TIMEOUT }, () => {
+    test("detectSystem() should return a valid system string", () => {
       const system = detectSystem();
-      assert.match(system, /^(linux|darwin|windows)\/(amd64|arm64|arm)$/);
+      assert.match(
+        system,
+        /^(linux|darwin|windows)\/(amd64|arm64|arm)$/,
+        "System string should be in 'platform/arch' format",
+      );
     });
   });
 
-  describe("Eget constructor", () => {
-    test("should create instance with options", () => {
-      const instance = new Eget({
-        tmpDir: "/custom/tmp",
-        verbose: true,
+  // --- Integration Tests ---
+  describe(
+    "Integration Tests (Eget Class)",
+    { timeout: STANDARD_TIMEOUT },
+    () => {
+      test("Eget constructor should handle options and defaults", () => {
+        const customCwd = join(TEST_BASE_DIR, "custom-cwd");
+        const customTmp = join(TEST_BASE_DIR, "custom-tmp");
+
+        const instance = new Eget({
+          cwd: customCwd,
+          tmpDir: customTmp,
+          verbose: true,
+        });
+
+        assert.strictEqual(instance.cwd, customCwd);
+        assert.strictEqual(instance.tmpDir, customTmp);
+        assert.strictEqual(instance.verbose, true);
       });
-      assert.strictEqual(instance.tmpDir, "/custom/tmp");
-      assert.strictEqual(instance.verbose, true);
-    });
-  });
 
-  describe("log()", () => {
-    test("should log when verbose is true", () => {
-      const verboseEget = new Eget({ verbose: true });
-      assert.doesNotThrow(() => verboseEget.log("test message"));
-    });
+      test("Eget constructor should throw on invalid option types", () => {
+        assert.throws(() => new Eget({ cwd: 123 }), TypeError);
+        assert.throws(() => new Eget({ tmpDir: {} }), TypeError);
+        assert.throws(() => new Eget({ verbose: "true" }), TypeError);
+        assert.throws(
+          () => new Eget({ onProgress: "not-a-function" }),
+          TypeError,
+        );
+      });
 
-    test("should not log when verbose is false", () => {
-      const quietEget = new Eget({ verbose: false });
-      assert.doesNotThrow(() => quietEget.log("test message"));
-    });
-  });
+      test("downloadFile() should download a file and report progress", async () => {
+        const testDir = join(TEST_BASE_DIR, "download-test");
+        await mkdir(testDir, { recursive: true });
+        const egetInstance = new Eget({ tmpDir: testDir });
 
-  describe("ensureDir()", () => {
-    test("should create directory", async () => {
-      const testDir = join(TEST_TMP_DIR, "test-dir");
-      await egetInstance.ensureDir(testDir);
-      await access(testDir);
-    });
+        const url =
+          "https://raw.githubusercontent.com/mathiasbynens/small/refs/heads/master/Makefile"; // 2 bytes
+        const filePath = join(testDir, "Makefile");
+        let progressCalled = false;
+        let finalState = { current: 0, total: 0 };
 
-    test("should not throw if directory exists", async () => {
-      const testDir = join(TEST_TMP_DIR, "existing-dir");
-      await egetInstance.ensureDir(testDir);
-      await assert.doesNotReject(() => egetInstance.ensureDir(testDir));
-    });
-  });
+        await egetInstance.downloadFile(
+          url,
+          filePath,
+          (_url, current, total) => {
+            progressCalled = true;
+            if (current > finalState.current) {
+              finalState = { current, total };
+            }
+          },
+        );
 
-  describe("downloadFile()", () => {
-    test("should download a small file", async () => {
-      // Use a reliable, small test file
-      const url = "https://httpbin.org/json";
-      const filePath = join(TEST_TMP_DIR, "test-download.json");
+        await access(filePath);
+        const stats = await stat(filePath);
+        assert.strictEqual(stats.size, 2, "File size should be 2 bytes");
+        assert.ok(
+          progressCalled,
+          "onProgress callback should have been called",
+        );
+        assert.strictEqual(
+          finalState.current,
+          2,
+          "Final progress call should report full size",
+        );
+      });
 
-      await egetInstance.downloadFile(url, filePath);
+      test("downloadFile() should throw on 404 error", async () => {
+        const egetInstance = new Eget();
+        const url = "https://www.google.com/404";
+        const filePath = join(TEST_BASE_DIR, "404.txt");
+        await assert.rejects(
+          () => egetInstance.downloadFile(url, filePath),
+          /HTTP 404/,
+          "Should reject with an HTTP 404 error",
+        );
+      });
+    },
+  );
 
-      // Verify file was created
-      await access(filePath);
-    });
+  // --- End-to-End Tests ---
+  describe("End-to-End Tests (eget function)", { timeout: E2E_TIMEOUT }, () => {
+    // Test Case 1: Basic download with onProgress callback
+    test("should download sops and call onProgress", async () => {
+      const testDir = join(TEST_BASE_DIR, "sops-test");
+      let progressCalled = false;
+      let lastProgress = { current: -1, total: -1 };
 
-    test("should throw on 404", async () => {
-      const url = "https://httpbin.org/status/404";
-      const filePath = join(TEST_TMP_DIR, "not-found.txt");
+      const success = await eget("getsops/sops", {
+        cwd: testDir,
+        asset: "^json",
+        onProgress: (url, current, total) => {
+          progressCalled = true;
+          assert.ok(basename(url).includes("sops"), "URL should be for sops");
+          lastProgress = { current, total };
+        },
+      });
 
-      await assert.rejects(
-        () => egetInstance.downloadFile(url, filePath),
-        /HTTP 404/
+      assert.ok(success, "eget() should return true on success");
+      await access(join(testDir, "sops"));
+      assert.ok(progressCalled, "onProgress callback was not called");
+      assert.ok(
+        lastProgress.current > 0,
+        "Current bytes should be greater than 0",
+      );
+      assert.strictEqual(
+        lastProgress.current,
+        lastProgress.total,
+        "Final progress should show current equals total",
       );
     });
 
-    test("should throw on invalid URL", async () => {
-      const url = "not-a-url";
-      const filePath = join(TEST_TMP_DIR, "invalid.txt");
+    // Test Case 2: Renaming output with 'to'
+    test("should download gh and rename it using 'to'", async () => {
+      const testDir = join(TEST_BASE_DIR, "gh-cli-test");
+      const success = await eget("cli/cli", {
+        cwd: testDir,
+        to: "gh-cli",
+      });
 
-      await assert.rejects(
-        () => egetInstance.downloadFile(url, filePath),
-        /Failed to parse URL/
-      );
-    });
-  });
-
-  describe("run()", () => {
-    test("should return missing URL for repo that needs network access", async () => {
-      // This should trigger the "missing file" error
-      const result = await egetInstance.run([
-        "--system",
-        "linux/amd64",
-        "getsops/sops",
-      ]);
-
-      assert.ok(typeof result === "object");
-      assert.ok(typeof result.success === "boolean");
-      if (!result.success) {
-        assert.ok(result.missingUrl);
-        assert.match(result.missingUrl, /https:\/\/api\.github\.com/);
-      }
+      assert.ok(success, "eget() should return true on success");
+      await access(join(testDir, "gh-cli"));
+      // Ensure original name doesn't exist
+      await assert.rejects(() => access(join(testDir, "gh")));
     });
 
-    test("should handle invalid arguments gracefully", async () => {
-      // eget handles invalid flags gracefully, doesn't throw
-      const result = await egetInstance.run([
-        "--invalid-flag-that-does-not-exist",
-      ]);
-      // Just verify it returns a result object
-      assert.ok(typeof result === "object");
-      assert.ok(typeof result.success === "boolean");
-    });
-  });
+    // Test Case 3: Extracting a single file from an archive
+    test("should download a single file from an archive using 'file'", async () => {
+      const testDir = join(TEST_BASE_DIR, "eget-file-test");
+      const success = await eget("zyedidia/eget", {
+        cwd: testDir,
+        file: "eget.1",
+      });
 
-  describe("download() integration test", () => {
-    test("should download a small binary successfully", async () => {
-      // Use a real but small download
-      const result = await egetInstance.download("cli/cli", {
+      assert.ok(success, "eget() should return true on success");
+      await access(join(testDir, "eget.1"));
+    });
+
+    // Test Case 4: Extracting all files into a directory
+    test("should extract all files into a directory with 'extractAll'", async () => {
+      const testDir = join(TEST_BASE_DIR, "nvim-test");
+      const outputDir = join(testDir, "nvim-out");
+      // Pre-create the target directory as required by eget's logic
+      await mkdir(outputDir, { recursive: true });
+
+      const success = await eget("neovim/neovim", {
+        cwd: testDir,
+        to: "nvim-out",
+        extractAll: true,
+        asset: "^.sha",
+      });
+
+      assert.ok(success, "eget() should return true on success");
+      await access(join(outputDir, "nvim"));
+      await access(join(outputDir, "vim.so"));
+    });
+
+    // Additional Test: --source flag
+    test("should download source code with 'source' flag", async () => {
+      const testDir = join(TEST_BASE_DIR, "source-test");
+      const success = await eget("stedolan/jq", {
+        cwd: testDir,
+        extractAll: true,
+        source: true,
+      });
+
+      assert.ok(success, "eget() should return true on success");
+      // Check for a file that is typically in source but not releases
+      await access(join(testDir, "build_website.py"));
+    });
+
+    // Additional Test: --download-only flag
+    test("should download archive without extracting with 'downloadOnly'", async () => {
+      const testDir = join(TEST_BASE_DIR, "download-only-test");
+      const success = await eget("sharkdp/bat", {
+        cwd: testDir,
+        downloadOnly: true,
+        asset: "linux-gnu.tar.gz",
         system: "linux/amd64",
-        tag: "v2.40.1",
-        output: TEST_TMP_DIR,
-        asset: "linux_amd64.tar.gz",
       });
 
-      assert.strictEqual(result, true);
-
-      // Verify some file was downloaded
-      const files = await readdir(TEST_TMP_DIR);
-      assert.ok(files.length > 0);
-    });
-
-    test("should handle invalid repo format gracefully", async () => {
-      // eget validates repo format but doesn't throw, just exits and succeeds
-      const result = await egetInstance.download("invalid-repo-format");
-      // It should return false for failure, not throw
-      assert.strictEqual(result, true);
-    });
-
-    test("should throw on missing repo parameter", async () => {
-      await assert.rejects(
-        () => egetInstance.download(),
-        /repo parameter is required/
+      assert.ok(success, "eget() should return true on success");
+      const files = await readdir(testDir);
+      assert.strictEqual(files.length, 1, "Should only be one file");
+      assert.ok(
+        files[0].endsWith(".tar.gz"),
+        "File should be a tar.gz archive",
       );
     });
-  });
 
-  describe("cleanup()", () => {
-    test("should remove tmp directory", async () => {
-      // Create some test files
-      await egetInstance.ensureDir(join(TEST_TMP_DIR, "subdir"));
+    // Using a specific tag and extractAll
+    test("should download all assets with 'extractAll' flag", async () => {
+      const testDir = join(TEST_BASE_DIR, "all-assets-test");
+      const outputDir = join(testDir, "output");
+      await mkdir(outputDir, { recursive: true });
 
-      // Cleanup
-      await egetInstance.cleanup();
-
-      // Verify directory is gone
-      await assert.rejects(() => access(TEST_TMP_DIR), { code: "ENOENT" });
-    });
-
-    test("should not throw if tmp directory does not exist", async () => {
-      // Cleanup again - should not throw
-      await assert.doesNotReject(() => egetInstance.cleanup());
-    });
-  });
-
-  describe("eget() helper function", () => {
-    test("should download and cleanup automatically", async () => {
-      const helperTestOutputDir = join(TEST_TMP_DIR, "eget-helper-out");
-      const helperTestTmpDir = join(TEST_TMP_DIR, "eget-helper-tmp");
-
-      const result = await eget("cli/cli", {
-        system: "linux/amd64",
-        tag: "v2.40.1",
-        asset: "linux_amd64.tar.gz",
-        verbose: true,
-        output: helperTestOutputDir,
-        tmpDir: helperTestTmpDir,
+      const success = await eget("jgm/pandoc", {
+        tag: "3.1.9", // Use a specific, small release
+        cwd: testDir,
+        to: "output",
+        asset: ".zip",
+        extractAll: true,
       });
 
-      assert.strictEqual(result, true);
-
-      // Since eget() cleans up tmpDir, and we set tmpDir to TEST_TMP_DIR,
-      // the directory might be gone. Let's check if files exist differently:
-      try {
-        const files = await readdir(helperTestOutputDir);
-        assert.ok(files.length > 0);
-      } catch (error) {
-        if (error.code === "ENOENT") {
-          // Directory was cleaned up - that's actually correct behavior
-          // Just verify the function returned true
-          assert.strictEqual(result, true);
-        } else {
-          throw error;
-        }
-      }
-    });
-
-    test("should throw on missing repo parameter", async () => {
-      await assert.rejects(() => eget(), /repo parameter is required/);
+      assert.ok(success, "eget() should return true on success");
+      const files = await readdir(outputDir);
+      assert.ok(files.length >= 1, "Should download multiple assets");
     });
   });
 });

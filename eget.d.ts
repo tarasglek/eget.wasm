@@ -8,7 +8,7 @@
 export type ProgressCallback = (
   url: string,
   currentBytes: number,
-  totalBytes: number
+  totalBytes: number,
 ) => void;
 
 /**
@@ -49,8 +49,6 @@ export interface DownloadOptions {
   tag?: string;
   /** Include pre-release versions. */
   preRelease?: boolean;
-  /** Download all assets. */
-  all?: boolean;
   /** Extract specific file from archive. */
   file?: string;
   /**
@@ -100,9 +98,9 @@ export type EgetFunctionOptions = EgetOptions &
   };
 
 /**
- * Eget class.
+ * IEget interface for Eget class.
  */
-export interface Eget {
+export interface IEget {
   tmpDir: string;
   cwd: string;
   verbose: boolean;
@@ -115,11 +113,11 @@ export interface Eget {
     url: string,
     filePath: string,
     onProgress: ProgressCallback | undefined,
-    timeoutMs?: number
+    timeoutMs?: number,
   ): Promise<void>;
   run(
     args: string[],
-    runOptions: { wasmSandboxDir?: string }
+    runOptions: { wasmSandboxDir?: string },
   ): Promise<RunResult>;
   moveDirectoryContents(sourceDir: string, destDir: string): Promise<void>;
   download(repo: string, options?: DownloadOptions): Promise<boolean>;
