@@ -46,52 +46,9 @@ eget --all --file '*' ActivityWatch/activitywatch
 
 Before you can get anything, you have to get Eget. If you already have Eget and want to upgrade, use `eget zyedidia/eget`.
 
-### WASI/WASM
+## WASM Version with Node.js Wrapper
 
-A [WASI](https://wasi.dev/) compatible build can be created by running the `./build-wasi.sh` script. This will produce an `eget.wasm` file. This build of `eget` does not perform any network I/O because the Go compiler and most WASI runtimes only support `wasi_snapshot_preview1`, which does not include sockets. Instead, any network requests are translated into filesystem reads from `/tmp`. A request to `scheme://host/path` will be read from `/tmp/scheme/host/path`.
-
-This is useful for running `eget` in sandboxed environments. You will need a WASI-compatible runtime like [wasmtime](https://wasmtime.dev/).
-
-To use the WASI build, you must first build the wasm binary:
-```bash
-./build-wasi.sh
-```
-
-Then, you must manually provide the files `eget` would normally download. For example, to get `getsops/sops`:
-
-Running `eget.wasm` will initially fail because it cannot access the network to get release information:
-```bash
-$ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops
-{"message":"wasm Get","path":"/tmp/https/api.github.com/repos/getsops/sops/releases/latest","url":"https://api.github.com/repos/getsops/sops/releases/latest","error":"open /tmp/https/api.github.com/repos/getsops/sops/releases/latest: No such file or directory"}
-```
-
-To fix this, you must download the data and place it in the path that `eget.wasm` expects:
-```bash
-mkdir -p ./tmp/https/api.github.com/repos/getsops/sops/releases
-curl -L https://api.github.com/repos/getsops/sops/releases/latest > ./tmp/https/api.github.com/repos/getsops/sops/releases/latest
-```
-
-Then run `eget` with `wasmtime` again. It will read the local file and attempt to find a suitable asset.
-Note that you must specify the target system with `--system` because `eget` cannot infer it in a WASI environment. The `-a ^json` argument is used here to filter out asset metadata files.
-```bash
-$ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
-https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
-{"message":"wasm Get","path":"/tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","url":"https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","error":"open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: No such file or directory"}
-```
-This shows the URL of the asset that `eget` will try to download. Now you must download this asset and place it in the correct path:
-```bash
-mkdir -p ./tmp/https/github.com/getsops/sops/releases/download/v3.10.2
-curl -L https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64 > ./tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
-```
-Finally, run the command again to extract the binary from the downloaded asset:
-```bash
-wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
-```
-This will extract `sops` to the current directory.
-
-## Node.js Wrapper
-
-A Node.js wrapper is provided for easy integration with Node.js applications.
+A Node.js wrapper is provided for easy integration with Node.js applications. It uses a WASI build of `eget` and automates the handling network requests, which are intercepted by the WASM module and fulfilled by the Node.js host.
 
 ### Installation
 
@@ -103,249 +60,244 @@ pnpm add eget.wasm
 yarn add eget.wasm
 ```
 
-### Quick Start
+#### Quick Start
 
-The easiest way to use `eget.wasm` is with the `eget()` function, which handles all the WASM instance creation and cleanup for you after invoking eget:
+The easiest way to use `eget.wasm` is with the `eget()` convenience function. It handles instance creation, download execution, and cleanup automatically.
 
 ```js
 import { eget } from 'eget.wasm';
 
-// Simple download
+// Download the latest version of sops for the current system
 await eget('getsops/sops');
 
-// With options
+// Download a specific version of the GitHub CLI to a custom directory, show detailed logs
 await eget('cli/cli', {
-  system: 'linux/amd64',
   tag: 'v2.40.1',
-  output: './bin'
+  to: './bin/gh',
+  verbose: true,
 });
 ```
 
 ### API Reference
 
-#### `eget(repo, options)`
+#### `eget(repo, [options])`
 
-Convenience function that creates an `Eget` instance, downloads the specified repository, and automatically cleans up temporary files.
+A convenience function that creates an `Eget` instance, runs a download, and cleans up temporary files automatically.
 
 ```js
 import { eget } from 'eget.wasm';
 
-await eget('owner/repo', options);
+const success = await eget('owner/repo', options);
 ```
 
 **Parameters:**
 
-- `repo` (string, required): GitHub repository in format 'owner/repo'
-- `options` (object, optional): Combined download and configuration options
-  - **Download Options:**
-    - `system` (string): Target platform (auto-detected if omitted)
-    - `asset` (string): Asset name pattern (regex)
-    - `output` (string): Output directory (default: `'.'`)
-    - `tag` (string): Specific release tag
-    - `preRelease` (boolean): Include pre-releases (default: `false`)
-    - `all` (boolean): Download all assets (default: `false`)
-    - `file` (string): Extract specific file from archive
-    - `to` (string): Rename extracted file
-    - `quiet` (boolean): Suppress output (default: `false`)
-    - `upgrade` (boolean): Only upgrade if newer (default: `false`)
-    - `verify` (string): SHA256 hash to verify download
-    - `removeArchive` (boolean): Remove archive after extraction (default: `false`)
-    - `extractAll` (boolean): Extract all files from archive (default: `false`)
-  - **Configuration Options:**
-    - `wasmPath` (string): Path to eget.wasm file (default: bundled version)
-    - `tmpDir` (string): Temporary directory (default: `'./tmp'`)
-    - `verbose` (boolean): Enable verbose logging (default: `false`)
+-   `repo` (string, required): GitHub repository in the format `owner/repo`.
+-   `options` (object, optional): An object containing download and configuration options.
 
-**Returns:** `Promise<boolean>` - `true` if successful, `false` otherwise
+**Download Options (passed to `eget.download`):**
 
-**Examples:**
+-   `asset` (string): Regex pattern to filter assets.
+-   `tag` (string): Specific release tag to use (e.g., `'v1.2.3'`).
+-   `to` (string): Path to save the final binary. If it's a directory, the binary is placed inside; if it's a file path, the binary is renamed.
+-   `system` (string): Target system (e.g., `'linux/amd64'`). Defaults to the auto-detected current system.
+-   `file` (string): A glob pattern to select a specific file to extract from an archive.
+-   `preRelease` (boolean): Include pre-releases. Default: `false`.
+-   `upgradeOnly` (boolean): Only download if the release is newer than the existing file. Default: `false`.
+-   `removeArchive` (boolean): Remove the downloaded archive after extraction. Default: `false`.
+-   `extractAll` (boolean): Extract all files from the archive, not just the first binary. Default: `false`.
+-   `source` (boolean): Download the source code (`.zip` or `.tar.gz`) instead of a release asset. Default: `false`.
+-   `downloadOnly` (boolean): Download the asset but do not extract it. Default: `false`.
+-   `timeout` (number): Download timeout in milliseconds. Default: `30000`.
 
-```js
-// Simple download
-await eget('getsops/sops');
+**Configuration Options (passed to the `Eget` constructor):**
 
-// Download specific version with custom output
-await eget('cli/cli', {
-  tag: 'v2.40.1',
-  system: 'linux/amd64',
-  output: './bin',
-  verbose: true
-});
+-   `cwd` (string): The working directory for output files. Defaults to `process.cwd()`.
+-   `tmpDir` (string): Directory for temporary files and cache. Defaults to `'./.eget'`.
+-   `verbose` (boolean): Enable detailed logging to `stderr`. Default: `false`.
+-   `onProgress` (function): A callback for download progress updates. See [Progress Notifications](#progress-notifications).
+-   `skipCleanup` (boolean): If `true`, temporary files will not be removed after the operation. Default: `false`.
 
-// Download with asset filtering
-await eget('goreleaser/goreleaser', {
-  asset: '^json',  // Exclude JSON files
-  removeArchive: true
-});
-```
+**Returns:** `Promise<boolean>` - `true` if successful, `false` otherwise.
 
-**Note:** This function automatically handles cleanup of temporary files, making it ideal for one-off downloads. For multiple downloads or when you need more control over the lifecycle, use the `Eget` class directly.
+#### `new Eget([options])`
 
-#### Eget Constructor
-
-```js
-const eget = new Eget(options)
-```
-
-**Parameters:**
-
-- `options` (object, optional):
-  - `tmpDir` (string): Temporary directory for downloads (default: `'./tmp'`)
-  - `verbose` (boolean): Enable verbose logging (default: `false`)
-  - `wasmPath` (string): Path to the eget.wasm file (default: `eget.wasm` in installed module dir)
-
-#### Methods
-
-##### `download(repo, options)`
-
-Downloads assets from a GitHub repository.
-
-```js
-await eget.download('owner/repo', {
-  system: 'linux/amd64',     // Target platform (auto-detected if omitted)
-  asset: 'linux.*\\.tar\\.gz', // Asset name pattern (regex)
-  output: './bin',           // Output directory
-  tag: 'v1.2.3',            // Specific release tag
-  preRelease: false,         // Include pre-releases
-  all: false,               // Download all assets
-  file: 'binary',           // Extract specific file from archive
-  to: 'renamed-binary',     // Rename extracted file
-  quiet: false,             // Suppress output
-  upgrade: false,           // Only upgrade if newer
-  verify: 'sha256hash',     // Verify SHA256 hash
-  removeArchive: false,     // Remove archive after extraction
-  extractAll: false         // Extract all files from archive
-});
-```
-
-**Returns:** `Promise<boolean>` - `true` if successful, `false` otherwise
-
-##### `cleanup()`
-
-Removes temporary files created during downloads.
-
-```js
-await eget.cleanup();
-```
-
-#### Utility Functions
-
-##### `detectSystem()`
-
-Auto-detects the current platform and architecture.
-
-```js
-import { detectSystem } from 'eget.wasm';
-
-console.log(detectSystem()); // e.g., 'linux/amd64', 'darwin/arm64', 'windows/amd64'
-```
-
-### Node.js Wrapper Examples
-
-#### Download Latest Release
+Creates a reusable `Eget` instance. This is useful if you want to perform multiple downloads or manage cleanup manually.
 
 ```js
 import { Eget } from 'eget.wasm';
 
-const eget = new Eget({ verbose: true });
-
-// Download latest sops for current platform
-await eget.download('getsops/sops', {
-  asset: '^json' // Exclude JSON metadata files
+const egetInstance = new Eget({
+  cwd: '/usr/local/bin',
+  tmpDir: '/tmp/eget-cache',
+  verbose: true,
 });
 ```
 
-#### Download Specific Version
+**Parameters:**
+
+-   `options` (object, optional):
+    -   `cwd` (string): The working directory for output files. Defaults to `process.cwd()`.
+    -   `tmpDir` (string): Directory for temporary files and cache. Defaults to `'./.eget'`.
+    -   `verbose` (boolean): Enable detailed logging. Default: `false`.
+    -   `onProgress` (function): A default progress callback for all downloads made with this instance.
+
+#### `egetInstance.download(repo, [options])`
+
+Downloads assets from a GitHub repository using the `Eget` instance's configuration.
 
 ```js
-// Download specific version of GitHub CLI
-await eget.download('cli/cli', {
-  tag: 'v2.40.1',
+const success = await egetInstance.download('owner/repo', {
+  tag: 'v1.2.3',
   system: 'linux/amd64',
-  output: './tools'
 });
 ```
 
-#### Download and Extract Specific File
+**Parameters:**
+
+-   `repo` (string, required): GitHub repository in the format `owner/repo`.
+-   `options` (object, optional): See the **Download Options** from the `eget()` function documentation above. Options passed here will override any defaults set on the `Eget` instance (like `onProgress`).
+
+**Returns:** `Promise<boolean>` - `true` if successful, `false` otherwise.
+
+#### `egetInstance.cleanup()`
+
+Removes the temporary directory (`tmpDir`) used for caching and downloads.
 
 ```js
-// Download and extract just the binary
-await eget.download('goreleaser/goreleaser', {
-  file: 'goreleaser',
-  to: 'goreleaser-bin',
-  removeArchive: true
-});
+await egetInstance.cleanup();
 ```
 
-#### Cross-Platform Download
+#### `detectSystem()`
+
+A utility function that returns the current platform and architecture in a format `eget` understands.
 
 ```js
-import { Eget, detectSystem } from 'eget.wasm';
+import { detectSystem } from 'eget.wasm';
 
-const eget = new Eget();
+console.log(detectSystem()); // e.g., 'linux/amd64', 'darwin/arm64'
+```
 
-// Download for multiple platforms
-const platforms = ['linux/amd64', 'darwin/amd64', 'windows/amd64'];
+### Progress Notifications
 
-for (const platform of platforms) {
-  await eget.download('cli/cli', {
-    system: platform,
-    output: `./dist/${platform.replace('/', '-')}`
-  });
-}
+You can monitor download progress by providing an `onProgress` callback. The callback receives the URL, the number of bytes downloaded so far, and the total file size.
 
-// Or just current platform
-await eget.download('cli/cli', {
-  system: detectSystem(),
-  output: './bin'
+```js
+import { eget } from 'eget.wasm';
+
+await eget('massive/file', {
+  onProgress: (url, current, total) => {
+    const percent = total > 0 ? ((current / total) * 100).toFixed(2) : 0;
+    console.log(`Downloading: ${percent}% (${current} / ${total} bytes)`);
+  },
 });
 ```
 
 ### Error Handling
 
-```js
-import { Eget } from 'eget.wasm';
+The wrapper throws specific errors for different HTTP and network issues. This allows for more robust error handling, such as reacting to rate limits.
 
-const eget = new Eget();
+-   `HttpErrorNotFound` (404)
+-   `HttpErrorServer` (500, 503)
+-   `HttpErrorRateLimit` (403, 429) - Includes a `retryAfter` property.
+-   `HttpError` (other HTTP errors)
+
+```js
+import { eget, HttpErrorRateLimit } from 'eget.wasm';
 
 try {
-  const success = await eget.download('owner/repo');
-  if (success) {
-    console.log('Download completed!');
-  } else {
-    console.log('Download failed');
-  }
+  await eget('some/repo');
 } catch (error) {
-  console.error('Error:', error.message);
-} finally {
-  // Clean up temporary files
-  await eget.cleanup();
+  if (error instanceof HttpErrorRateLimit) {
+    console.error(`Rate limited! Try again after: ${error.retryAfter}`);
+  } else {
+    console.error(`An unexpected error occurred: ${error.message}`);
+  }
 }
 ```
 
 ### TypeScript Support
 
-The package includes full TypeScript definitions:
+The package includes full TypeScript definitions for all exported functions and classes.
 
 ```typescript
 import { Eget, detectSystem } from 'eget.wasm';
 import type { EgetOptions, DownloadOptions } from 'eget.wasm';
 
-const options: EgetOptions = {
+const egetOptions: EgetOptions = {
   tmpDir: './cache',
-  verbose: true
+  verbose: true,
 };
 
-const eget = new Eget('./eget.wasm', options);
+const egetInstance = new Eget(egetOptions);
 
 const downloadOptions: DownloadOptions = {
   system: 'linux/amd64',
-  asset: 'linux.*\\.tar\\.gz',
-  output: './bin'
+  tag: 'v1.0.0',
+  to: './bin/my-tool'
 };
 
-const success: boolean = await eget.download('owner/repo', downloadOptions);
+const success: boolean = await egetInstance.download(
+  'owner/repo',
+  downloadOptions
+);
 ```
+
+### How WASM and Node.js Wrapper Works
+
+The `eget.wasm` binary is compiled with WASI, which does not have direct network access. Instead, when it needs to make an HTTP request, it attempts to read a file from a special path (e.g., `/tmp/https/api.github.com/...`).
+
+This Node.js wrapper intercepts that file-read operation. If the file doesn't exist, the wrapper performs the actual HTTP request, saves the response to the path the WASM module expects, and then lets the WASM module retry the file read. This cycle continues until `eget` has all the data it needs to download and extract the binary.
+
+A [WASI](https://wasi.dev/) compatible build can be created by running the `make eget.wasm`. This will produce an `eget.wasm` file. This build of `eget` does not perform any network I/O because the Go compiler and most WASI runtimes only support `wasi_snapshot_preview1`, which does not include sockets. Instead, any network requests are translated into filesystem reads from `/tmp`. A request to `scheme://host/path` will be read from `/tmp/scheme/host/path`.
+
+This is useful for running `eget` in sandboxed environments. You will need a WASI-compatible runtime like [wasmtime](https://wasmtime.dev/).
+
+To use the WASI build, you must first build the wasm binary:
+
+```bash
+make eget.wasm
+```
+
+Then, you must manually provide the files `eget` would normally download. For example, to get `getsops/sops`:
+
+Running `eget.wasm` will initially fail because it cannot access the network to get release information:
+
+```bash
+$ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops
+{"message":"wasm Get","path":"/tmp/https/api.github.com/repos/getsops/sops/releases/latest","url":"https://api.github.com/repos/getsops/sops/releases/latest","error":"open /tmp/https/api.github.com/repos/getsops/sops/releases/latest: No such file or directory"}
+```
+
+To fix this, you must download the data and place it in the path that `eget.wasm` expects:
+
+```bash
+mkdir -p ./tmp/https/api.github.com/repos/getsops/sops/releases
+curl -L https://api.github.com/repos/getsops/sops/releases/latest > ./tmp/https/api.github.com/repos/getsops/sops/releases/latest
+```
+
+Then run `eget` with `wasmtime` again. It will read the local file and attempt to find a suitable asset.
+Note that you must specify the target system with `--system` because `eget` cannot infer it in a WASI environment. The `-a ^json` argument is used here to filter out asset metadata files.
+
+```bash
+$ wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
+https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
+{"message":"wasm Get","path":"/tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","url":"https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64","error":"open /tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64: No such file or directory"}
+```
+
+This shows the URL of the asset that `eget` will try to download. Now you must download this asset and place it in the correct path:
+
+```bash
+mkdir -p ./tmp/https/github.com/getsops/sops/releases/download/v3.10.2
+curl -L https://github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64 > ./tmp/https/github.com/getsops/sops/releases/download/v3.10.2/sops-v3.10.2.linux.amd64
+```
+
+Finally, run the command again to extract the binary from the downloaded asset:
+
+```bash
+wasmtime --dir=$PWD::/ eget.wasm --system=linux/amd64 getsops/sops -a ^json
+```
+
+This will extract `sops` to the current directory.
 
 ### Quick-install script
 
