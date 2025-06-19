@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "types": ["node"],
+    "checkJs": true,
+    "strict": true,
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "noEmit": true
+  },
+  "include": ["eget.js"],
+  "exclude": ["node_modules"]
+}
