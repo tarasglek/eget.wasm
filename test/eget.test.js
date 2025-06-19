@@ -152,6 +152,7 @@ describe("Eget WASM Node.js Wrapper", () => {
       const success = await eget("cli/cli", {
         cwd: testDir,
         to: "gh-cli",
+        verbose: true
       });
 
       assert.ok(success, "eget() should return true on success");
@@ -184,6 +185,7 @@ describe("Eget WASM Node.js Wrapper", () => {
         to: "nvim-out",
         extractAll: true,
         asset: "^.sha",
+        verbose: true
       });
 
       assert.ok(success, "eget() should return true on success");
@@ -236,6 +238,7 @@ describe("Eget WASM Node.js Wrapper", () => {
         to: "output",
         asset: ".zip",
         extractAll: true,
+        verbose: true
       });
 
       assert.ok(success, "eget() should return true on success");
