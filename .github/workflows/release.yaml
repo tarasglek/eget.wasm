@@ -1,0 +1,52 @@
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  check-version:
+    # Only run if the CI workflow succeeded
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      is-new-version: ${{ steps.check.outputs.is-new-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        uses: PostHog/check-package-version@v2    
+
+  pnpm-publish:
+    needs: check-version
+    # Don't bother publishing if the package version hasn't gone up
+    if: needs.check-version.outputs.is-new-version == 'true'
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm publish --no-git-checks --access public
+        shell: bash
+
+name: Release
+
+on:
+  workflow_run:
+    # Only do the release workflow if CI on master passes cleanly
+    workflows: ["CI"]
+    types:
+      - completed
+    branches:
+      - master
+
+permissions:
+  id-token: write
